@@ -24,7 +24,8 @@ record Problem(string TestId, List<Order> Orders);
 /// <param name="id">order id</param>
 /// <param name="action">place, move, pickup or discard</param>
 /// <param name="target">heater, cooler or shelf. Target is the destination for move</param>
-class Action(DateTime timestamp, string id, string action, string target) {
+class Action(DateTime timestamp, string id, string action, string target)
+{
     public static readonly string Place = "place";
     public static readonly string Move = "move";
     public static readonly string Pickup = "pickup";
@@ -47,21 +48,25 @@ class Action(DateTime timestamp, string id, string action, string target) {
 /// <summary>
 /// Client is a client for fetching and solving challenge test problems
 /// </summary>
-class Client(string endpoint, string auth) {
+class Client(string endpoint, string auth)
+{
     private readonly string endpoint = endpoint, auth = auth;
     private readonly HttpClient client = new();
-    
+
     /// <summary>
     ///  NewProblemAsync fetches a new test problem from the server. The URL also works in a browser for convenience.
     /// </summary>
-    public async Task<Problem> NewProblemAsync(string name, long seed = 0) {
-        if (seed == 0) {
+    public async Task<Problem> NewProblemAsync(string name, long seed = 0)
+    {
+        if (seed == 0)
+        {
             seed = new Random().NextInt64();
         }
 
-        var url = $"{endpoint}/interview/challenge/new?auth={auth}&name={name}&seed={seed}";         
+        var url = $"{endpoint}/interview/challenge/new?auth={auth}&name={name}&seed={seed}";
         var response = await client.GetAsync(url);
-        if (!response.IsSuccessStatusCode) {
+        if (!response.IsSuccessStatusCode)
+        {
             throw new Exception($"{url}: {response.StatusCode}");
         }
 
@@ -72,7 +77,8 @@ class Client(string endpoint, string auth) {
         return new Problem(id, orders ?? []);
     }
 
-    class Options(TimeSpan rate, TimeSpan min, TimeSpan max) {
+    class Options(TimeSpan rate, TimeSpan min, TimeSpan max)
+    {
         [JsonPropertyName("rate")]
         public long Rate { get; init; } = (long)rate.TotalMicroseconds;
         [JsonPropertyName("min")]
@@ -81,7 +87,8 @@ class Client(string endpoint, string auth) {
         public long Max { get; init; } = (long)max.TotalMicroseconds;
     };
 
-    class Solution(Options options, List<Action> actions) {
+    class Solution(Options options, List<Action> actions)
+    {
         [JsonPropertyName("options")]
         public Options Options { get; init; } = options;
         [JsonPropertyName("actions")]
@@ -91,7 +98,8 @@ class Client(string endpoint, string auth) {
     /// <summary>
     /// SolveAsync submits a sequence of actions and parameters as a solution to a test problem. Returns test result.
     /// </summary>
-    public async Task<string> SolveAsync(string testId, TimeSpan rate, TimeSpan min, TimeSpan max, List<Action> actions) {    
+    public async Task<string> SolveAsync(string testId, TimeSpan rate, TimeSpan min, TimeSpan max, List<Action> actions)
+    {
         var solution = new Solution(new Options(rate, min, max), actions);
 
         var url = $"{endpoint}/interview/challenge/solve?auth={auth}";
@@ -100,7 +108,8 @@ class Client(string endpoint, string auth) {
         request.Content = new StringContent(JsonSerializer.Serialize(solution), Encoding.UTF8, "application/json");
 
         var response = await client.SendAsync(request);
-        if (!response.IsSuccessStatusCode) {
+        if (!response.IsSuccessStatusCode)
+        {
             throw new Exception($"{url}: {response.StatusCode}");
         }
 
