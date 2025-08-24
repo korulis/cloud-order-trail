@@ -15,6 +15,21 @@ namespace Challenge;
 /// <param name="Freshness">freshness in seconds</param>
 record Order(string Id, string Name, string Temp, long Price, long Freshness);
 
+record ExpiringOrder : Order
+{
+    public DateTime Expiration { get; init; } = DateTime.MaxValue;
+
+    public ExpiringOrder(string id, string name, string temp, long price, long freshness, DateTime expiration) : base(id, name, temp, price, freshness)
+    {
+        Expiration = expiration;
+    }
+
+    public ExpiringOrder(Order order, DateTime expiration) : this(order.Id, order.Name, order.Temp, order.Price, order.Freshness, expiration)
+    {
+    }
+
+}
+
 record Problem(string TestId, List<Order> Orders);
 
 /// <summary>
