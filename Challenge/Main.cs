@@ -20,12 +20,21 @@ class Challenge
             var problem = await client.NewProblemAsync(name, seed);
 
             // ------ Simulation harness logic goes here using rate, min and max ----
+            var storage = new Dictionary<string, int>()
+            {
+                { Action.Cooler, 6 },
+                { Action.Shelf, 12 },
+                { Action.Heater, 6 }
+            };
+
 
             var actions = new List<Action>();
 
             foreach (var order in problem.Orders)
             {
                 Console.WriteLine($"Received: {order}");
+                //   Console.WriteLine($"Received: {order}, expiring {expiringOrder.Expiration:HH:mm:ss.fff}");
+
 
                 actions.Add(new Action(DateTime.Now, order.Id, Action.Place, Action.Cooler));
                 await Task.Delay(rate);
@@ -42,4 +51,11 @@ class Challenge
             Console.WriteLine($"Simulation failed: {e}");
         }
     }
+    
+    public static float GenerateRandomFloat(float min, float max)
+    {
+        var result = (float)(min + (new Random().NextDouble() * (max - min)));
+        return result;
+    }
+
 }
