@@ -1,6 +1,6 @@
 # README
 
-Author: `<your name here>`
+Author: `Karolis Blazevicius`
 
 ## How to run
 
