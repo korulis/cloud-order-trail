@@ -12,7 +12,7 @@ class Challenge
     /// <param name="rate">Inverse order rate (in milliseconds)</param>
     /// <param name="min">Minimum pickup time (in seconds)</param>
     /// <param name="max">Maximum pickup time (in seconds)</param>
-    static async Task Main(string auth, string endpoint = "https://api.cloudkitchens.com", string name = "", long seed = 0, int rate = 500, int min = 4, int max = 8)
+    static async Task Main(string auth, string endpoint = "https://api.cloudkitchens.com", string name = "", long seed = 0, int rate = 50, int min = 4, int max = 8)
     {
         try
         {
@@ -26,19 +26,9 @@ class Challenge
                 { Action.Shelf, 12 },
                 { Action.Heater, 6 }
             };
-
-
-            var actions = new List<Action>();
-
-            foreach (var order in problem.Orders)
-            {
-                Console.WriteLine($"Received: {order}");
-                //   Console.WriteLine($"Received: {order}, expiring {expiringOrder.Expiration:HH:mm:ss.fff}");
-
-
-                actions.Add(new Action(DateTime.Now, order.Id, Action.Place, Action.Cooler));
-                await Task.Delay(rate);
-            }
+            var orders = problem.Orders;
+            var simulation = new Simulation();
+            List<Action> actions = await simulation.Simulate(TimeProvider.System, rate, storage, orders);
 
             // ----------------------------------------------------------------------
 
@@ -51,11 +41,33 @@ class Challenge
             Console.WriteLine($"Simulation failed: {e}");
         }
     }
-    
+
     public static float GenerateRandomFloat(float min, float max)
     {
         var result = (float)(min + (new Random().NextDouble() * (max - min)));
         return result;
+    }
+
+}
+
+public class Simulation
+{
+    public async Task<List<Action>> Simulate(TimeProvider time, int rate, Dictionary<string, int> storage, List<Order> orders)
+    {
+
+        var actions = new List<Action>();
+
+        foreach (var order in orders)
+        {
+            Console.WriteLine($"Received: {order}");
+            //   Console.WriteLine($"Received: {order}, expiring {expiringOrder.Expiration:HH:mm:ss.fff}");
+
+
+            actions.Add(new Action(time.GetLocalNow().DateTime, order.Id, Action.Place, Action.Shelf));
+            await Task.Delay(rate);
+        }
+
+        return actions;
     }
 
 }

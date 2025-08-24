@@ -13,24 +13,9 @@ namespace Challenge;
 /// <param name="Temp">ideal temperature</param>
 /// <param name="Price">price in dollars</param>
 /// <param name="Freshness">freshness in seconds</param>
-record Order(string Id, string Name, string Temp, long Price, long Freshness);
+public record Order(string Id, string Name, string Temp, long Price, long Freshness);
 
-record ExpiringOrder : Order
-{
-    public DateTime Expiration { get; init; } = DateTime.MaxValue;
-
-    public ExpiringOrder(string id, string name, string temp, long price, long freshness, DateTime expiration) : base(id, name, temp, price, freshness)
-    {
-        Expiration = expiration;
-    }
-
-    public ExpiringOrder(Order order, DateTime expiration) : this(order.Id, order.Name, order.Temp, order.Price, order.Freshness, expiration)
-    {
-    }
-
-}
-
-record Problem(string TestId, List<Order> Orders);
+public record Problem(string TestId, List<Order> Orders);
 
 /// <summary>
 /// Action is a json-friendly representation of an action.
@@ -39,8 +24,16 @@ record Problem(string TestId, List<Order> Orders);
 /// <param name="id">order id</param>
 /// <param name="action">place, move, pickup or discard</param>
 /// <param name="target">heater, cooler or shelf. Target is the destination for move</param>
-class Action(DateTime timestamp, string id, string action, string target)
+public record Action
 {
+    public Action(DateTime timestamp, string id, string actionType, string target)
+    {
+        Timestamp = (long)timestamp.Subtract(DateTime.UnixEpoch).TotalMicroseconds;
+        Id = id;
+        ActionType = actionType;
+        Target = target;
+    }
+
     public static readonly string Place = "place";
     public static readonly string Move = "move";
     public static readonly string Pickup = "pickup";
@@ -51,13 +44,13 @@ class Action(DateTime timestamp, string id, string action, string target)
     public static readonly string Shelf = "shelf";
 
     [JsonPropertyName("timestamp")]
-    public long Timestamp { get; init; } = (long)timestamp.Subtract(DateTime.UnixEpoch).TotalMicroseconds;
+    public long Timestamp { get; }
     [JsonPropertyName("id")]
-    public string Id { get; init; } = id;
+    public string Id { get; }
     [JsonPropertyName("action")]
-    public string Action_ { get; init; } = action;
+    public string ActionType { get; }
     [JsonPropertyName("target")]
-    public string Target { get; init; } = target;
+    public string Target { get; }
 };
 
 /// <summary>
