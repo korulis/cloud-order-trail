@@ -1,4 +1,3 @@
-using System.ComponentModel.DataAnnotations;
 using Microsoft.Extensions.Time.Testing;
 using Xunit.Abstractions;
 
@@ -18,20 +17,20 @@ public class SimulateTests
     }
 
     [Theory(Timeout = 20_000)]
-    [InlineData(Target.Shelf)]
-    [InlineData(Target.Cooler)]
-    [InlineData(Target.Heater)]
-    public async Task Puts_SingleOrderInSingleSpot(string expectedTarget)
+    [InlineData(Temperature.Room)]
+    [InlineData(Temperature.Cold)]
+    [InlineData(Temperature.Hot)]
+    public async Task Puts_SingleOrderInSingleSpot(string expectedTemp)
     {
         // Arrange
         var storage = new Dictionary<string, int>()
         {
-            { expectedTarget, 1 },
+            { Simulation.ToTarget(expectedTemp), 1 },
         };
         var rate = 500;
-        Order order = new("1", "Banana", expectedTarget, 20, 50);
+        Order order = new("1", "Banana", expectedTemp, 20, 50);
         var orders = new List<Order>() { order };
-        var expectedAction = new Action(_timeProvider.GetLocalNow().DateTime, order.Id, ActionType.Place, expectedTarget);
+        var expectedAction = new Action(_timeProvider.GetLocalNow().DateTime, order.Id, ActionType.Place, Simulation.ToTarget(expectedTemp));
 
         // Act
         var actions = await SimulateToTheEnd(storage, rate, orders);
@@ -55,9 +54,9 @@ public class SimulateTests
         var rate = 500;
         var orders = new List<Order>()
         {
-            new("1", "Banana", Target.Cooler, 20, 50),
-            new("2", "Banana", Target.Shelf, 15, 40),
-            new("3", "Banana", Target.Heater, 10, 30)
+            new("1", "Banana", Temperature.Cold, 20, 50),
+            new("2", "Banana", Temperature.Room, 15, 40),
+            new("3", "Banana", Temperature.Hot, 10, 30)
         };
 
         // Act
@@ -82,9 +81,9 @@ public class SimulateTests
         var rate = 500;
         var orders = new List<Order>()
         {
-            new("1", "Banana", Target.Cooler, 20, 50),
-            new("2", "Banana", Target.Cooler, 20, 50),
-            new("3", "Banana", Target.Cooler, 20, 50),
+            new("1", "Banana", Temperature.Cold, 20, 50),
+            new("2", "Banana", Temperature.Cold, 20, 50),
+            new("3", "Banana", Temperature.Cold, 20, 50),
         };
         // Act
         var actions = await SimulateToTheEnd(storage, rate, orders);
@@ -95,11 +94,12 @@ public class SimulateTests
     }
 
     [Theory(Timeout = 20_000)]
-    [InlineData(Target.Cooler)]
-    [InlineData(Target.Heater)]
-    public async Task Puts_CoolOrHotOrderOnShelf_WhenCoolerOrHeaterIsFullRespectively(string target)
+    [InlineData(Temperature.Cold)]
+    [InlineData(Temperature.Hot)]
+    public async Task Puts_ColdOrHotOrderOnShelf_WhenCoolerOrHeaterIsFullRespectively(string temperature)
     {
         // Arrange
+        var target = Simulation.ToTarget(temperature);
         Dictionary<string, int> storage = new()
         {
             { target, 1 },
@@ -109,8 +109,8 @@ public class SimulateTests
         var rate = 500;
         List<Order> orders = new()
         {
-            new("1", "Banana", target, 20, 50),
-            new("2", "Banana", target, 20, 50),
+            new("1", "Banana", temperature, 20, 50),
+            new("2", "Banana", temperature, 20, 50),
         };
         // Act
         var actions = await SimulateToTheEnd(storage, rate, orders);

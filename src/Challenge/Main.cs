@@ -73,24 +73,24 @@ public class Simulation
 
         foreach (var order in orders)
         {
-            if ((new[] { Target.Cooler, Target.Heater }).Contains(order.Temp))
+            var target = ToTarget(order.Temp);
+            if ((new[] { Target.Cooler, Target.Heater }).Contains(target))
             {
                 // checking if == is actually sufficient
-                if (storage[order.Temp] <= actions.Count(x => x.Target == order.Temp))
+                if (storage[target] <= actions.Count(x => x.Target == target))
                 {
                     actions.Add(new(localNow, order.Id, ActionType.Place, Target.Shelf));
                     Console.WriteLine($"Order placed: {order}");
                 }
                 else
                 {
-                    actions.Add(new(localNow, order.Id, ActionType.Place, order.Temp));
+                    actions.Add(new(localNow, order.Id, ActionType.Place, target));
                     Console.WriteLine($"Order placed: {order}");
                 }
             }
             else
             {
-
-                actions.Add(new(localNow, order.Id, ActionType.Place, order.Temp));
+                actions.Add(new(localNow, order.Id, ActionType.Place, target));
                 Console.WriteLine($"Order placed: {order}");
             }
             await Task.Delay(TimeSpan.FromMilliseconds(rate), _time);
@@ -98,6 +98,17 @@ public class Simulation
 
         Console.WriteLine("");
         return actions;
+    }
+
+    public static string ToTarget(string temp)
+    {
+        return temp switch
+        {
+            "room" => Target.Shelf,
+            "cold" => Target.Cooler,
+            "hot" => Target.Heater,
+            _ => throw new Exception("Unknow temperature option: " + temp)
+        };
     }
 
 }

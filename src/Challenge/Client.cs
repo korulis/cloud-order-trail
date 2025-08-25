@@ -1,9 +1,20 @@
+using System.CommandLine.Rendering.Views;
 using System.Net.Http.Json;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
 namespace Challenge;
+
+/// <summary>
+/// Used to describe preferred order storage temperature.
+/// </summary>
+public static class Temperature
+{
+    public const string Cold = "cold";
+    public const string Room = "room";
+    public const string Hot = "hot";
+}
 
 /// <summary>
 /// Order is a json-friendly representation of an order.
@@ -26,7 +37,7 @@ public static class ActionType
 }
 
 /// <summary>
-/// Used to describe preferred food storage temperature or a storage type with a certain temperature
+/// Used to describe order storage type.
 /// </summary>
 public static class Target
 {
