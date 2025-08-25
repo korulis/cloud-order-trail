@@ -22,13 +22,13 @@ class Challenge
             // ------ Simulation harness logic goes here using rate, min and max ----
             var storage = new Dictionary<string, int>()
             {
-                { Action.Cooler, 6 },
-                { Action.Shelf, 12 },
-                { Action.Heater, 6 }
+                { StorageTemp.Cooler, 6 },
+                { StorageTemp.Shelf, 12 },
+                { StorageTemp.Heater, 6 }
             };
             var orders = problem.Orders;
-            var simulation = new Simulation();
-            List<Action> actions = await simulation.Simulate(TimeProvider.System, rate, storage, orders);
+            var simulation = new Simulation(TimeProvider.System);
+            List<Action> actions = await simulation.Simulate(rate, storage, orders);
 
             // ----------------------------------------------------------------------
 
@@ -52,7 +52,18 @@ class Challenge
 
 public class Simulation
 {
-    public async Task<List<Action>> Simulate(TimeProvider time, int rate, Dictionary<string, int> storage, List<Order> orders)
+    private readonly TimeProvider _time;
+
+    /// <summary>
+    /// Simulation representing module
+    /// </summary>
+    /// <param name="time"> Date and time measure providing object </param>
+    public Simulation(TimeProvider time)
+    {
+        _time = time;
+    }
+
+    public async Task<List<Action>> Simulate(int rate, Dictionary<string, int> storage, List<Order> orders)
     {
 
         var actions = new List<Action>();
@@ -60,11 +71,9 @@ public class Simulation
         foreach (var order in orders)
         {
             Console.WriteLine($"Received: {order}");
-            //   Console.WriteLine($"Received: {order}, expiring {expiringOrder.Expiration:HH:mm:ss.fff}");
 
-
-            actions.Add(new Action(time.GetLocalNow().DateTime, order.Id, Action.Place, Action.Shelf));
-            await Task.Delay(rate);
+            actions.Add(new Action(_time.GetLocalNow().DateTime, order.Id, ActionType.Place, order.Temp));
+            await Task.Delay(TimeSpan.FromMilliseconds(rate), _time);
         }
 
         return actions;
