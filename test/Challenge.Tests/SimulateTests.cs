@@ -1,4 +1,4 @@
-using System.Threading.Tasks;
+using System.ComponentModel.DataAnnotations;
 using Microsoft.Extensions.Time.Testing;
 using Xunit.Abstractions;
 
@@ -18,9 +18,9 @@ public class SimulateTests
     }
 
     [Theory(Timeout = 20_000)]
-    [InlineData(StorageTemp.Shelf)]
-    [InlineData(StorageTemp.Cooler)]
-    [InlineData(StorageTemp.Heater)]
+    [InlineData(Target.Shelf)]
+    [InlineData(Target.Cooler)]
+    [InlineData(Target.Heater)]
     public async Task Puts_SingleOrderInSingleSpot(string expectedTarget)
     {
         // Arrange
@@ -47,27 +47,76 @@ public class SimulateTests
         // Arrange
         var storage = new Dictionary<string, int>()
         {
-            { StorageTemp.Cooler, 1 },
-            { StorageTemp.Shelf, 1 },
-            { StorageTemp.Heater, 1 },
+            { Target.Cooler, 1 },
+            { Target.Shelf, 1 },
+            { Target.Heater, 1 },
 
         };
         var rate = 500;
         var orders = new List<Order>()
         {
-            new("1", "Banana", StorageTemp.Cooler, 20, 50),
-            new("2", "Banana", StorageTemp.Shelf, 15, 40),
-            new("3", "Banana", StorageTemp.Heater, 10, 30)
+            new("1", "Banana", Target.Cooler, 20, 50),
+            new("2", "Banana", Target.Shelf, 15, 40),
+            new("3", "Banana", Target.Heater, 10, 30)
         };
 
         // Act
-        List<Action> actions = await SimulateToTheEnd(storage, rate, orders);
+        var actions = await SimulateToTheEnd(storage, rate, orders);
 
         // Assert
         Assert.Equal(3, actions.Count);
-        Assert.Equal(StorageTemp.Cooler, actions.Single(x => x.Id == "1").Target);
-        Assert.Equal(StorageTemp.Shelf, actions.Single(x => x.Id == "2").Target);
-        Assert.Equal(StorageTemp.Heater, actions.Single(x => x.Id == "3").Target);
+        Assert.Equal(Target.Cooler, actions.Single(x => x.Id == "1").Target);
+        Assert.Equal(Target.Shelf, actions.Single(x => x.Id == "2").Target);
+        Assert.Equal(Target.Heater, actions.Single(x => x.Id == "3").Target);
+    }
+
+    [Fact(Timeout = 20_000)]
+    public async Task Puts_SeveralOrdersIntoCooler()
+    {
+        // Arrange
+        var storage = new Dictionary<string, int>()
+        {
+            { Target.Cooler, 3 },
+
+        };
+        var rate = 500;
+        var orders = new List<Order>()
+        {
+            new("1", "Banana", Target.Cooler, 20, 50),
+            new("2", "Banana", Target.Cooler, 20, 50),
+            new("3", "Banana", Target.Cooler, 20, 50),
+        };
+        // Act
+        var actions = await SimulateToTheEnd(storage, rate, orders);
+
+        // Assert
+        Assert.Equal(3, actions.Count);
+        Assert.True(actions.All(x => x.Target == Target.Cooler), "Not all orders were put in the cooler.");
+    }
+
+    [Theory(Timeout = 20_000)]
+    [InlineData(Target.Cooler)]
+    [InlineData(Target.Heater)]
+    public async Task Puts_CoolOrHotOrderOnShelf_WhenCoolerOrHeaterIsFullRespectively(string target)
+    {
+        // Arrange
+        Dictionary<string, int> storage = new()
+        {
+            { target, 1 },
+            { Target.Shelf, 1 },
+
+        };
+        var rate = 500;
+        List<Order> orders = new()
+        {
+            new("1", "Banana", target, 20, 50),
+            new("2", "Banana", target, 20, 50),
+        };
+        // Act
+        var actions = await SimulateToTheEnd(storage, rate, orders);
+
+        // Assert
+        Assert.Equal(Target.Shelf, actions.Single(x => x.Id == "2").Target);
     }
 
     private async Task<List<Action>> SimulateToTheEnd(Dictionary<string, int> storage, int rate, List<Order> orders)
@@ -75,6 +124,7 @@ public class SimulateTests
         var actionsTask = _sut.Simulate(rate, storage, orders);
         while (actionsTask.IsCompleted == false)
         {
+            // make time increment steps slightly more granular than simulation steps.
             _timeProvider.Advance(TimeSpan.FromMilliseconds(rate) / 3);
         }
         var actions = await actionsTask;

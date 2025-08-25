@@ -26,9 +26,9 @@ public static class ActionType
 }
 
 /// <summary>
-/// Used to describe prefered food storage temperature or a storage type with a certain temperature
+/// Used to describe preferred food storage temperature or a storage type with a certain temperature
 /// </summary>
-public static class StorageTemp
+public static class Target
 {
     public const string Heater = "heater";
     public const string Cooler = "cooler";

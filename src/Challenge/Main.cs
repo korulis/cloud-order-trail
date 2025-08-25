@@ -1,3 +1,5 @@
+using System.Security.Cryptography.X509Certificates;
+
 namespace Challenge;
 
 class Challenge
@@ -22,9 +24,9 @@ class Challenge
             // ------ Simulation harness logic goes here using rate, min and max ----
             var storage = new Dictionary<string, int>()
             {
-                { StorageTemp.Cooler, 6 },
-                { StorageTemp.Shelf, 12 },
-                { StorageTemp.Heater, 6 }
+                { Target.Cooler, 6 },
+                { Target.Shelf, 12 },
+                { Target.Heater, 6 }
             };
             var orders = problem.Orders;
             var simulation = new Simulation(TimeProvider.System);
@@ -65,17 +67,36 @@ public class Simulation
 
     public async Task<List<Action>> Simulate(int rate, Dictionary<string, int> storage, List<Order> orders)
     {
+        DateTime localNow = _time.GetLocalNow().DateTime;
 
         var actions = new List<Action>();
 
         foreach (var order in orders)
         {
-            Console.WriteLine($"Received: {order}");
+            if ((new[] { Target.Cooler, Target.Heater }).Contains(order.Temp))
+            {
+                // checking if == is actually sufficient
+                if (storage[order.Temp] <= actions.Count(x => x.Target == order.Temp))
+                {
+                    actions.Add(new(localNow, order.Id, ActionType.Place, Target.Shelf));
+                    Console.WriteLine($"Order placed: {order}");
+                }
+                else
+                {
+                    actions.Add(new(localNow, order.Id, ActionType.Place, order.Temp));
+                    Console.WriteLine($"Order placed: {order}");
+                }
+            }
+            else
+            {
 
-            actions.Add(new Action(_time.GetLocalNow().DateTime, order.Id, ActionType.Place, order.Temp));
+                actions.Add(new(localNow, order.Id, ActionType.Place, order.Temp));
+                Console.WriteLine($"Order placed: {order}");
+            }
             await Task.Delay(TimeSpan.FromMilliseconds(rate), _time);
         }
 
+        Console.WriteLine("");
         return actions;
     }
 
