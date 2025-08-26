@@ -1,5 +1,3 @@
-using System.Security.Cryptography.X509Certificates;
-
 namespace Challenge;
 
 class Challenge
@@ -14,7 +12,7 @@ class Challenge
     /// <param name="rate">Inverse order rate (in milliseconds)</param>
     /// <param name="min">Minimum pickup time (in seconds)</param>
     /// <param name="max">Maximum pickup time (in seconds)</param>
-    static async Task Main(string auth, string endpoint = "https://api.cloudkitchens.com", string name = "", long seed = 0, int rate = 50, int min = 4, int max = 8)
+    static async Task Main(string auth, string endpoint = "https://api.cloudkitchens.com", string name = "", long seed = 0, int rate = 50, int min = 0, int max = 8)
     {
         try
         {
@@ -77,7 +75,7 @@ public class Simulation
             if ((new[] { Target.Cooler, Target.Heater }).Contains(target))
             {
                 // checking if == is actually sufficient
-                if (storage[target] <= actions.Count(x => x.Target == target))
+                if (storage[target] <= actions.Count(x => x.Target == target && x.ActionType == ActionType.Place))
                 {
                     actions.Add(new(localNow, order.Id, ActionType.Place, Target.Shelf));
                     Console.WriteLine($"Order placed: {order}");
@@ -94,6 +92,19 @@ public class Simulation
                 Console.WriteLine($"Order placed: {order}");
             }
             await Task.Delay(TimeSpan.FromMilliseconds(rate), _time);
+            //pickup
+            Action pickupAction = new(localNow, order.Id, ActionType.Pickup, target);
+            actions.Add(pickupAction);
+            Console.WriteLine($"Order picked: {pickupAction}");
+
+            // actions.Add(new(localNow, order.Id, ActionType.Place, target));
+            // Console.WriteLine($"Order placed: {order}");
+            // await Task.Delay(TimeSpan.FromMilliseconds(rate), _time);
+            // pickup
+            // Action pickupAction = new(localNow, order.Id, ActionType.Pickup, Target.Heater);
+            // actions.Add(pickupAction);
+            // Console.WriteLine($"Order picked: {pickupAction}");
+
         }
 
         Console.WriteLine("");

@@ -36,9 +36,53 @@ public class SimulateTests
         var actions = await SimulateToTheEnd(storage, rate, orders);
 
         // Assert
-        Assert.Single(actions);
-        Assert.Equal(expectedAction, actions[0]);
+        Assert.Equal(expectedAction, actions.First());
     }
+
+    [Theory(Timeout = 20_000)]
+    [InlineData(Temperature.Room, Target.Shelf)]
+    [InlineData(Temperature.Cold, Target.Cooler)]
+    [InlineData(Temperature.Hot, Target.Heater)]
+    public async Task PicksUp_SingleOrderFromCorrectTarget(string expectedTemp, string expectedTarget)
+    {
+        // Arrange
+        Dictionary<string, int> storage = new() { { expectedTarget, 1 } };
+        var rate = 500;
+        Order order = new("1", "Banana", expectedTemp, 20, 50);
+        var orders = new List<Order>() { order };
+
+        // Act
+        var actions = await SimulateToTheEnd(storage, rate, orders);
+
+        // Assert
+        Assert.Equal(2, actions.Count);
+        Assert.Equal(order.Id, actions.Last().Id);
+        Assert.Equal(ActionType.Pickup, actions.Last().ActionType);
+        Assert.Equal(expectedTarget, actions.Last().Target);
+    }
+
+    [Theory(Timeout = 20_000)]
+    [InlineData(Temperature.Room, Target.Shelf)]
+    [InlineData(Temperature.Cold, Target.Cooler)]
+    [InlineData(Temperature.Hot, Target.Heater)]
+    public async Task PicksUp_SingleOrderAtViablePickupTime(string expectedTemp, string expectedTarget)
+    {
+        // Arrange
+        Dictionary<string, int> storage = new() { { expectedTarget, 1 } };
+        var rate = 500;
+        Order order = new("1", "Banana", expectedTemp, 20, 50);
+        var orders = new List<Order>() { order };
+
+        // Act
+        var actions = await SimulateToTheEnd(storage, rate, orders);
+
+        // Assert
+        Assert.Equal(2, actions.Count);
+        Assert.Equal(order.Id, actions.Last().Id);
+        Assert.Equal(ActionType.Pickup, actions.Last().ActionType);
+        Assert.Equal(expectedTarget, actions.Last().Target);
+    }
+
 
     [Fact(Timeout = 20_000)]
     public async Task Puts_SingleOrderInEachSpot()
@@ -63,10 +107,9 @@ public class SimulateTests
         var actions = await SimulateToTheEnd(storage, rate, orders);
 
         // Assert
-        Assert.Equal(3, actions.Count);
-        Assert.Equal(Target.Cooler, actions.Single(x => x.Id == "1").Target);
-        Assert.Equal(Target.Shelf, actions.Single(x => x.Id == "2").Target);
-        Assert.Equal(Target.Heater, actions.Single(x => x.Id == "3").Target);
+        Assert.Equal(Target.Cooler, actions.First(x => x.Id == "1").Target);
+        Assert.Equal(Target.Shelf, actions.First(x => x.Id == "2").Target);
+        Assert.Equal(Target.Heater, actions.First(x => x.Id == "3").Target);
     }
 
     [Fact(Timeout = 20_000)]
@@ -89,8 +132,9 @@ public class SimulateTests
         var actions = await SimulateToTheEnd(storage, rate, orders);
 
         // Assert
-        Assert.Equal(3, actions.Count);
-        Assert.True(actions.All(x => x.Target == Target.Cooler), "Not all orders were put in the cooler.");
+        Assert.True(
+            actions.Where(x => x.ActionType == ActionType.Place).All(x => x.Target == Target.Cooler),
+            $"Not all orders were put in the cooler: {string.Join(",", actions.Where(x => x.ActionType == ActionType.Place).Select(x => x.Target))}");
     }
 
     [Theory(Timeout = 20_000)]
@@ -116,7 +160,7 @@ public class SimulateTests
         var actions = await SimulateToTheEnd(storage, rate, orders);
 
         // Assert
-        Assert.Equal(Target.Shelf, actions.Single(x => x.Id == "2").Target);
+        Assert.Equal(Target.Shelf, actions.First(x => x.Id == "2").Target);
     }
 
     private async Task<List<Action>> SimulateToTheEnd(Dictionary<string, int> storage, int rate, List<Order> orders)

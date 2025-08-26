@@ -49,6 +49,8 @@ public static class Target
 
 public record Action
 {
+    private readonly DateTime _originalTimestamp;
+
     /// <summary>
     /// Action is a json-friendly representation of an action.
     /// </summary>
@@ -58,10 +60,16 @@ public record Action
     /// <param name="target">heater, cooler or shelf. Target is the destination for move</param>
     public Action(DateTime timestamp, string id, string actionType, string target)
     {
+        _originalTimestamp = timestamp;
         Timestamp = (long)timestamp.Subtract(DateTime.UnixEpoch).TotalMicroseconds;
         Id = id;
         ActionType = actionType;
         Target = target;
+    }
+
+    public override string ToString()
+    {
+        return $"Action {new { Timestamp = _originalTimestamp.ToString("hh:mm:ss.fff"), OrderId = Id, ActionType, Target }}";
     }
 
     [JsonPropertyName("timestamp")]
