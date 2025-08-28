@@ -21,8 +21,9 @@ public class SimulateTests : IDisposable
             { Target.Cooler, 3 },
             { Target.Shelf, 3 },
             { Target.Heater, 3 }};
-        _defaultConfig = new Simulation.Config(50_000, 4_000_000, 8_000_000, storage);
+        _defaultConfig = new Simulation.Config(500_000, 4_000_000, 8_000_000, storage);
         _cts = new CancellationTokenSource(5_000);
+        // _cts = new CancellationTokenSource(5000_000);
 
     }
 

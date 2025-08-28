@@ -76,7 +76,8 @@ public class Simulation
     public async Task<List<Action>> Simulate(Config config, List<Order> orders, CancellationToken ct)
     {
 
-        var actions = new List<Action>();
+        Dictionary<string, (PickableOrder Order, List<Action> Actions)> actionRepo = new() { };
+
 
         List<PickableOrder> pickableOrders = [];
 
@@ -86,25 +87,30 @@ public class Simulation
             var target = ToTarget(order.Temp);
 
             var pickupInMicroseconds = PickableOrder.RandomBetween(config.min, config.max);
-            pickableOrders.Add(new PickableOrder(order, localNow.AddMicroseconds(pickupInMicroseconds)));
+            PickableOrder pickableOrder = new(order, localNow.AddMicroseconds(pickupInMicroseconds));
+            pickableOrders.Add(pickableOrder);
 
+            var actions = actionRepo.Values.Select(x => x.Actions).SelectMany(x => x).ToList();
             if ((new[] { Target.Cooler, Target.Heater }).Contains(target))
             {
                 // checking if == is actually sufficient
                 if (config.storage[target] <= actions.Count(x => x.Target == target && x.ActionType == ActionType.Place))
                 {
-                    actions.Add(new(localNow, order.Id, ActionType.Place, Target.Shelf));
+                    actionRepo[order.Id] = (pickableOrder, new() { });
+                    actionRepo[order.Id].Actions.Add(new(localNow, order.Id, ActionType.Place, Target.Shelf));
                     Console.WriteLine($"Order placed: {order}");
                 }
                 else
                 {
-                    actions.Add(new(localNow, order.Id, ActionType.Place, target));
+                    actionRepo[order.Id] = (pickableOrder, new() { });
+                    actionRepo[order.Id].Actions.Add(new(localNow, order.Id, ActionType.Place, target));
                     Console.WriteLine($"Order placed: {order}");
                 }
             }
             else
             {
-                actions.Add(new(localNow, order.Id, ActionType.Place, target));
+                actionRepo[order.Id] = (pickableOrder, new() { });
+                actionRepo[order.Id].Actions.Add(new(localNow, order.Id, ActionType.Place, target));
                 Console.WriteLine($"Order placed: {order}");
             }
 
@@ -122,55 +128,54 @@ public class Simulation
             // Action pickupAction = new(localNow, order.Id, ActionType.Pickup, Target.Heater);
             // actions.Add(pickupAction);
             // Console.WriteLine($"Order picked: {pickupAction}");
-            pickupOrders(localNow, ref actions, pickableOrders);
+            pickupOrders(localNow, ref actionRepo, pickableOrders);
 
         }
 
-        while (!actions.GroupBy(x => x.Id).All(
+        while (!actionRepo.Select(kvp => kvp.Value.Actions).All(
             group => group.Select(x => x.ActionType).Contains(ActionType.Discard)
                 || group.Select(x => x.ActionType).Contains(ActionType.Pickup)))
         {
             var localNow = _time.GetLocalNow().DateTime;
-            pickupOrders(localNow, ref actions, pickableOrders);
+            pickupOrders(localNow, ref actionRepo, pickableOrders);
             await Task.Delay(TimeSpan.FromMicroseconds(config.rate), _time, ct);
         }
 
 
         Console.WriteLine("");
-        return actions;
+        return actionRepo.Select(kvp => kvp.Value.Actions).SelectMany(x => x).ToList();
     }
 
-    private static void pickupOrders(DateTime localNow, ref List<Action> actions, IEnumerable<PickableOrder> pickableOrders)
+    private static void pickupOrders(DateTime localNow, ref Dictionary<string, (PickableOrder Order, List<Action> Actions)> actionRepo, List<PickableOrder> pickableOrders)
     {
-        // v2
+        // v3 works with actions repo
         if (true)
         {
-            var postPickupTimeOrders = pickableOrders.Where(x => x.PickupTime <= localNow).ToList();
-
-            var lastActionsForUnpickedOrders = actions
-                .GroupBy(x => x.Id)
-                .Select(group => group.OrderBy(x => x.Timestamp).ToList())
-                .Where(group => new[] { ActionType.Place, ActionType.Move }.Contains(group.Last().ActionType))
-                .ToList();
-
-            var pickupActions = postPickupTimeOrders.Join(
-                lastActionsForUnpickedOrders,
-                o => o.Id,
-                a => a.Last().Id,
-                (o, acts) =>
+            var pickupActions = actionRepo
+            .Where(kvp => kvp.Value.Order.PickupTime <= localNow)
+            .Select(kvp =>
+            {
+                kvp.Value.Actions.Sort((x, y) => Convert.ToInt32(x.Timestamp - y.Timestamp));
+                return kvp;
+            })
+            .Where(kvp => new[] { ActionType.Place, ActionType.Move }.Contains(kvp.Value.Actions.Last().ActionType))
+            .Select(kvp =>
+            {
+                if (IsFresh(kvp.Value.Order, kvp.Value.Actions))
                 {
-                    //lock order.order ... or order.id ... or acts ... or {state, acts}
-                    var result = IsFresh(o, acts)
-                    ? new Action(localNow, o.Id, ActionType.Pickup, acts.Last().Target)
-                    : new Action(localNow, o.Id, ActionType.Discard, acts.Last().Target);
-                    return result;
-                })
-                .ToList();
-
-            if (pickupActions.Count > 0) Console.WriteLine($"Adding some pickups\n {string.Join("\n", pickupActions)}");
-            actions.AddRange(pickupActions);
-            // todo delete implementation and add one condition at a time.
-
+                    Action item = new(localNow, kvp.Value.Order.Id, ActionType.Pickup, kvp.Value.Actions.Last().Target);
+                    Console.WriteLine($"Picking up order {item}");
+                    kvp.Value.Actions.Add(item);
+                }
+                else
+                {
+                    Action item = new(localNow, kvp.Value.Order.Id, ActionType.Discard, kvp.Value.Actions.Last().Target);
+                    Console.WriteLine($"Discarding order {item}");
+                    kvp.Value.Actions.Add(item);
+                }
+                return kvp;
+            })
+            .ToList();
         }
 
     }
