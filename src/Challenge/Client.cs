@@ -1,4 +1,3 @@
-using System.CommandLine.Rendering.Views;
 using System.Net.Http.Json;
 using System.Text;
 using System.Text.Json;
@@ -51,6 +50,16 @@ public record Action
 {
     private readonly DateTime _originalTimestamp;
 
+
+    [JsonPropertyName("timestamp")]
+    public long Timestamp { get; }
+    [JsonPropertyName("id")]
+    public string Id { get; }
+    [JsonPropertyName("action")]
+    public string ActionType { get; }
+    [JsonPropertyName("target")]
+    public string Target { get; }
+
     /// <summary>
     /// Action is a json-friendly representation of an action.
     /// </summary>
@@ -72,14 +81,10 @@ public record Action
         return $"Action {new { Timestamp = _originalTimestamp.ToString("hh:mm:ss.fff"), OrderId = Id, ActionType, Target }}";
     }
 
-    [JsonPropertyName("timestamp")]
-    public long Timestamp { get; }
-    [JsonPropertyName("id")]
-    public string Id { get; }
-    [JsonPropertyName("action")]
-    public string ActionType { get; }
-    [JsonPropertyName("target")]
-    public string Target { get; }
+    public DateTime GetOriginalTimestamp()
+    {
+        return _originalTimestamp;
+    }
 };
 
 /// <summary>

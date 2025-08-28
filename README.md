@@ -21,3 +21,8 @@ $ dotnet run -- --auth <token>
 ## Discard criteria
 
 `<your chosen discard criteria and rationale here>`
+
+## Notes
+
+Consider the period to be an half closed interval [min, max]
+Chose generate pickup time at microseconds granularity, because this is the granularity at which timestamps are suplied to the test server.
