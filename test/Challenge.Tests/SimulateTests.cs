@@ -1,3 +1,4 @@
+using System.ComponentModel.DataAnnotations;
 using Microsoft.Extensions.Time.Testing;
 using Xunit.Abstractions;
 
@@ -22,7 +23,6 @@ public class SimulateTests : IDisposable
             { Target.Heater, 3 }};
         _defaultConfig = new Simulation.Config(50_000, 4_000_000, 8_000_000, storage);
         _cts = new CancellationTokenSource(5_000);
-        // _cts = new CancellationTokenSource(500_000);
 
     }
 
@@ -34,11 +34,10 @@ public class SimulateTests : IDisposable
     {
         // Arrange
         Order order = new("1", "Banana", expectedTemp, 20, 50);
-        var orders = new List<Order>() { order };
         var expectedAction = new Action(_timeProvider.GetLocalNow().DateTime, order.Id, ActionType.Place, Simulation.ToTarget(expectedTemp));
 
         // Act
-        var actions = await SimulateToTheEnd(_defaultConfig, orders, _cts.Token);
+        var actions = await SimulateToTheEnd(_defaultConfig, [order], _cts.Token);
 
         // Assert
         Assert.Equal(expectedAction, actions.First());
@@ -52,10 +51,9 @@ public class SimulateTests : IDisposable
     {
         // Arrange
         Order order = new("1", "Banana", expectedTemp, 20, 50);
-        var orders = new List<Order>() { order };
 
         // Act
-        var actions = await SimulateToTheEnd(_defaultConfig, orders, _cts.Token);
+        var actions = await SimulateToTheEnd(_defaultConfig, [order], _cts.Token);
 
         // Assert
         Assert.Equal(2, actions.Count);
@@ -70,10 +68,9 @@ public class SimulateTests : IDisposable
         // Arrange
         var config = _defaultConfig;
         Order order = new("1", "Banana", Temperature.Room, 20, 50);
-        var orders = new List<Order>() { order };
 
         // Act
-        var actions = await SimulateToTheEnd(config, orders, _cts.Token);
+        var actions = await SimulateToTheEnd(config, [order], _cts.Token);
 
         // Assert
         Assert.Equal(2, actions.Count);
@@ -93,12 +90,11 @@ public class SimulateTests : IDisposable
     public async Task Puts_SingleOrderInEachSpot()
     {
         // Arrange
-        var orders = new List<Order>()
-        {
+        List<Order> orders = [
             new("1", "Banana", Temperature.Cold, 20, 50),
             new("2", "Banana", Temperature.Room, 15, 40),
             new("3", "Banana", Temperature.Hot, 10, 30)
-        };
+        ];
 
         // Act
         var actions = await SimulateToTheEnd(_defaultConfig, orders, _cts.Token);
@@ -113,12 +109,12 @@ public class SimulateTests : IDisposable
     public async Task Puts_SeveralOrdersIntoCooler()
     {
         // Arrange
-        var orders = new List<Order>()
-        {
+        List<Order> orders =
+        [
             new("1", "Banana", Temperature.Cold, 20, 50),
             new("2", "Banana", Temperature.Cold, 20, 50),
             new("3", "Banana", Temperature.Cold, 20, 50),
-        };
+        ];
         // Act
         var actions = await SimulateToTheEnd(_defaultConfig, orders, _cts.Token);
 
@@ -141,14 +137,13 @@ public class SimulateTests : IDisposable
             { Target.Shelf, 1 },
 
         };
-        var config = _defaultConfig with { storage = storage };
-        List<Order> orders = new()
-        {
+        List<Order> orders =
+        [
             new("1", "Banana", temperature, 20, 50),
             new("2", "Banana", temperature, 20, 50),
-        };
+        ];
         // Act
-        var actions = await SimulateToTheEnd(config, orders, _cts.Token);
+        var actions = await SimulateToTheEnd(_defaultConfig with { storage = storage }, orders, _cts.Token);
 
         // Assert
         Assert.Equal(Target.Shelf, actions.First(x => x.Id == "2").Target);
@@ -156,11 +151,13 @@ public class SimulateTests : IDisposable
 
     private async Task<List<Action>> SimulateToTheEnd(Simulation.Config config, List<Order> orders, CancellationToken ct)
     {
+        // make time increment steps slightly more granular than simulation steps or pickup interval.
+        var minStep = Math.Min(config.rate, config.max - config.min) / 2;
+
         var actionsTask = _sut.Simulate(config, orders, ct);
         while (actionsTask.IsCompleted == false)
         {
-            // make time increment steps slightly more granular than simulation steps.
-            _timeProvider.Advance(TimeSpan.FromMicroseconds(config.rate) / 3);
+            _timeProvider.Advance(TimeSpan.FromMicroseconds(minStep));
         }
         var actions = await actionsTask;
         return actions;
