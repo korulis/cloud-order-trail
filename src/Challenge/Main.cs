@@ -137,43 +137,82 @@ public class Simulation
 
     private static void pickupOrders(DateTime localNow, ref List<Action> actions, IEnumerable<PickableOrder> pickableOrders)
     {
-        //pickup
-        // preclude collection modification problems in loop
-        var oldActions = actions[..actions.Count];
+        // v2
+        if(true)
+        {
+            var postPickupTimeOrders = pickableOrders.Where(x => x.PickupTime <= localNow).ToList();
 
+            var lastActionsForUnpickedOrders = actions
+                .GroupBy(x => x.Id)
+                .Select(group => group.OrderBy(x => x.Timestamp).ToList())
+                .Where(group => new[] { ActionType.Place, ActionType.Move }.Contains(group.Last().ActionType))
+                .ToList();
 
-        var placedOrderIds = oldActions.Where(x => x.ActionType == ActionType.Place)
-            .Select(x => x.Id)
-            .ToList();
-        var removedOrderIds = oldActions.Where(x => x.ActionType == ActionType.Pickup || x.ActionType == ActionType.Discard)
-            .Select(x => x.Id)
-            .ToList();
-        var currentOrderIds = placedOrderIds.Except(removedOrderIds).ToList();
-
-        var lastActions = oldActions
-            .Where(x => currentOrderIds.Contains(x.Id))
-            .GroupBy(x => x.Id)
-            .Select(x => x.OrderBy(a => a.Timestamp).Last())
-            .ToList();
-
-        var pickupActions = lastActions
-            .Join(
-                pickableOrders
-                .Where(x => x.PickupTime <= localNow)
-                ,
-                a => a.Id,
+            var pickupActions = postPickupTimeOrders.Join(
+                lastActionsForUnpickedOrders,
                 o => o.Id,
-                (a, o) => new { Action = a, Order = o }
-            )
-            // if fresh....
-            .Select(x => new Action(localNow, x.Order.Id, ActionType.Pickup, x.Action.Target))
-            .ToList();
+                a => a.Last().Id,
+                (o, acts) =>
+                {
+                    var result = IsFresh(o, acts)
+                    ? new Action(localNow, o.Id, ActionType.Pickup, acts.Last().Target)
+                    : new Action(localNow, o.Id, ActionType.Discard, acts.Last().Target);
+                    return result;
+                })
+                .ToList();
 
-        // todo add cancelation tokens
-        if (pickupActions.Count > 0) Console.WriteLine($"Adding some pickups {string.Join(", ", pickupActions)}");
-        actions.AddRange(pickupActions);
-        // todo reimplement this starting with filtering orders first
-        // todo delete implementation and add one condition at a time.
+            if (pickupActions.Count > 0) Console.WriteLine($"Adding some pickups\n {string.Join("\n", pickupActions)}");
+            actions.AddRange(pickupActions);
+            // todo delete implementation and add one condition at a time.
+
+        }
+
+        // v1
+        if(false)
+        {
+
+            // preclude collection modification problems in loop
+            var oldActions = actions[..actions.Count];
+
+
+
+            var placedOrderIds = oldActions.Where(x => x.ActionType == ActionType.Place)
+                .Select(x => x.Id)
+                .ToList();
+            var removedOrderIds = oldActions.Where(x => x.ActionType == ActionType.Pickup || x.ActionType == ActionType.Discard)
+                .Select(x => x.Id)
+                .ToList();
+            var currentOrderIds = placedOrderIds.Except(removedOrderIds).ToList();
+
+            var lastActions = oldActions
+                .Where(x => currentOrderIds.Contains(x.Id))
+                .GroupBy(x => x.Id)
+                .Select(x => x.OrderBy(a => a.Timestamp).Last())
+                .ToList();
+
+            var postPickupTimeOrders = pickableOrders.Where(x => x.PickupTime <= localNow);
+
+
+            var pickupActions = lastActions
+                .Join(
+                    postPickupTimeOrders,
+                    a => a.Id,
+                    o => o.Id,
+                    (a, o) => new { Action = a, Order = o }
+                )
+                // if fresh....
+                .Select(x => new Action(localNow, x.Order.Id, ActionType.Pickup, x.Action.Target))
+                .ToList();
+
+            if (pickupActions.Count > 0) Console.WriteLine($"Adding some pickups {string.Join(", ", pickupActions)}");
+            actions.AddRange(pickupActions);
+        }
+    }
+
+    private static bool IsFresh(PickableOrder o, List<Action> a)
+    {
+        // temp implementation
+        return true;
     }
 
     public static string ToTarget(string temp)
