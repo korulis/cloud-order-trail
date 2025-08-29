@@ -1,3 +1,5 @@
+using System.Collections.Concurrent;
+
 namespace Challenge;
 
 class Challenge
@@ -12,7 +14,7 @@ class Challenge
     /// <param name="rate">Inverse order rate (in milliseconds)</param>
     /// <param name="min">Minimum pickup time (in seconds)</param>
     /// <param name="max">Maximum pickup time (in seconds)</param>
-    static async Task Main(string auth, string endpoint = "https://api.cloudkitchens.com", string name = "", long seed = 0, int rate = 50, int min = 0, int max = 8)
+    static async Task Main(string auth, string endpoint = "https://api.cloudkitchens.com", string name = "", long seed = 0, int rate = 450, int min = 1, int max = 2)
     {
         try
         {
@@ -51,8 +53,12 @@ class Challenge
     }
 }
 
-public class Simulation
+public class Simulation : IDisposable
 {
+    private static readonly List<PickableOrder> _pickableOrders = [];
+    private static readonly Dictionary<string, (PickableOrder Order, List<Action> Actions)> _actionRepo = new() { };
+
+
     /// <summary>
     /// Stores constants required for order handling simulation.
     /// </summary>
@@ -75,12 +81,39 @@ public class Simulation
 
     public async Task<List<Action>> Simulate(Config config, List<Order> orders, CancellationToken ct)
     {
+        var orderPlacementTask = PlaceOrders(config, orders, ct);
 
-        Dictionary<string, (PickableOrder Order, List<Action> Actions)> actionRepo = new() { };
+        var orderPickupsTask = PickupOrders(config, orders.Count, ct);
 
+        await Task.WhenAll([orderPickupsTask, orderPlacementTask]);
 
-        List<PickableOrder> pickableOrders = [];
+        var result = _actionRepo.Select(kvp => kvp.Value.Actions).SelectMany(x => x).OrderBy(x => x.Timestamp).ToList();
+        return result;
+    }
 
+    private int processedOrderCount() => _actionRepo
+                .Select(kvp => kvp.Value.Actions)
+                .Count(group => group.Select(x => x.ActionType).Contains(ActionType.Discard)
+                    || group.Select(x => x.ActionType).Contains(ActionType.Pickup));
+
+    private async Task PickupOrders(Config config, int orderCount, CancellationToken ct)
+    {
+        while (processedOrderCount() != orderCount)
+        {
+            var localNow = _time.GetLocalNow().DateTime;
+
+            pickupOrders2(localNow, _actionRepo);
+            // todo delay exactly until next order is picked up.
+            await Task.Delay(TimeSpan.FromMicroseconds(config.rate), _time, ct);
+
+            // var ddd = new ConcurrentDictionary<string, List<Action>>() { };
+            // ddd.AddOrUpdate("1", (key, arg) => new List<Action>(), (key, currentValue, arg) => new List<Action>(), factoryArgument: 13);
+            // ddd.GetOrAdd("1", (key, arg) => new List<Action>(), factoryArgument: 13);
+        }
+    }
+
+    private async Task PlaceOrders(Config config, List<Order> orders, CancellationToken ct)
+    {
         foreach (var order in orders)
         {
             var localNow = _time.GetLocalNow().DateTime;
@@ -88,29 +121,29 @@ public class Simulation
 
             var pickupInMicroseconds = PickableOrder.RandomBetween(config.min, config.max);
             PickableOrder pickableOrder = new(order, localNow.AddMicroseconds(pickupInMicroseconds));
-            pickableOrders.Add(pickableOrder);
+            _pickableOrders.Add(pickableOrder);
 
-            var actions = actionRepo.Values.Select(x => x.Actions).SelectMany(x => x).ToList();
+            var actions = _actionRepo.Values.Select(x => x.Actions).SelectMany(x => x).ToList();
             if ((new[] { Target.Cooler, Target.Heater }).Contains(target))
             {
                 // checking if == is actually sufficient
                 if (config.storage[target] <= actions.Count(x => x.Target == target && x.ActionType == ActionType.Place))
                 {
-                    actionRepo[order.Id] = (pickableOrder, new() { });
-                    actionRepo[order.Id].Actions.Add(new(localNow, order.Id, ActionType.Place, Target.Shelf));
+                    _actionRepo[order.Id] = (pickableOrder, new() { });
+                    _actionRepo[order.Id].Actions.Add(new(localNow, order.Id, ActionType.Place, Target.Shelf));
                     Console.WriteLine($"Order placed: {order}");
                 }
                 else
                 {
-                    actionRepo[order.Id] = (pickableOrder, new() { });
-                    actionRepo[order.Id].Actions.Add(new(localNow, order.Id, ActionType.Place, target));
+                    _actionRepo[order.Id] = (pickableOrder, new() { });
+                    _actionRepo[order.Id].Actions.Add(new(localNow, order.Id, ActionType.Place, target));
                     Console.WriteLine($"Order placed: {order}");
                 }
             }
             else
             {
-                actionRepo[order.Id] = (pickableOrder, new() { });
-                actionRepo[order.Id].Actions.Add(new(localNow, order.Id, ActionType.Place, target));
+                _actionRepo[order.Id] = (pickableOrder, new() { });
+                _actionRepo[order.Id].Actions.Add(new(localNow, order.Id, ActionType.Place, target));
                 Console.WriteLine($"Order placed: {order}");
             }
 
@@ -120,37 +153,15 @@ public class Simulation
 
             await Task.Delay(TimeSpan.FromMicroseconds(config.rate), _time, ct);
 
-
-            // actions.Add(new(localNow, order.Id, ActionType.Place, target));
-            // Console.WriteLine($"Order placed: {order}");
-            // await Task.Delay(TimeSpan.FromMilliseconds(rate), _time);
-            // pickup
-            // Action pickupAction = new(localNow, order.Id, ActionType.Pickup, Target.Heater);
-            // actions.Add(pickupAction);
-            // Console.WriteLine($"Order picked: {pickupAction}");
-            pickupOrders(localNow, ref actionRepo, pickableOrders);
-
         }
-
-        while (!actionRepo.Select(kvp => kvp.Value.Actions).All(
-            group => group.Select(x => x.ActionType).Contains(ActionType.Discard)
-                || group.Select(x => x.ActionType).Contains(ActionType.Pickup)))
-        {
-            var localNow = _time.GetLocalNow().DateTime;
-            pickupOrders(localNow, ref actionRepo, pickableOrders);
-            await Task.Delay(TimeSpan.FromMicroseconds(config.rate), _time, ct);
-        }
-
-
-        Console.WriteLine("");
-        return actionRepo.Select(kvp => kvp.Value.Actions).SelectMany(x => x).ToList();
     }
 
-    private static void pickupOrders(DateTime localNow, ref Dictionary<string, (PickableOrder Order, List<Action> Actions)> actionRepo, List<PickableOrder> pickableOrders)
+    private static void pickupOrders2(DateTime localNow, Dictionary<string, (PickableOrder Order, List<Action> Actions)> actionRepo)
     {
         // v3 works with actions repo
         if (true)
         {
+            // todo: error Collection was modified; enumeration operation may not execute.
             var pickupActions = actionRepo
             .Where(kvp => kvp.Value.Order.PickupTime <= localNow)
             .Select(kvp =>
@@ -195,6 +206,12 @@ public class Simulation
             "hot" => Target.Heater,
             _ => throw new Exception("Unknow temperature option: " + temp)
         };
+    }
+
+    public void Dispose()
+    {
+        _pickableOrders.Clear();
+        _actionRepo.Clear();
     }
 }
 

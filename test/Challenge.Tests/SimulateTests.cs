@@ -1,4 +1,4 @@
-using System.ComponentModel.DataAnnotations;
+using System.Text.Json;
 using Microsoft.Extensions.Time.Testing;
 using Xunit.Abstractions;
 
@@ -74,7 +74,7 @@ public class SimulateTests : IDisposable
         var actions = await SimulateToTheEnd(config, [order], _cts.Token);
 
         // Assert
-        Assert.Equal(2, actions.Count);
+        Assert.True(2 == actions.Count, $"Expected 2 actions, received : {JsonSerializer.Serialize(actions)}");
         var pickupAction = actions.Last();
         Assert.Equal(order.Id, pickupAction.Id);
         Assert.True(ActionType.Pickup == pickupAction.ActionType, $"{(actions[0], actions[1])}");
@@ -167,5 +167,6 @@ public class SimulateTests : IDisposable
     public void Dispose()
     {
         _cts.Dispose();
+        _sut.Dispose();
     }
 }
