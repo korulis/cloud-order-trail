@@ -16,7 +16,7 @@ class Challenge
     /// <param name="rate">Inverse order rate (in milliseconds)</param>
     /// <param name="min">Minimum pickup time (in seconds)</param>
     /// <param name="max">Maximum pickup time (in seconds)</param>
-    static async Task Main(string auth, string endpoint = "https://api.cloudkitchens.com", string name = "", long seed = 0, int rate = 49, int min = 1, int max = 2)
+    static async Task Main(string auth, string endpoint = "https://api.cloudkitchens.com", string name = "", long seed = 0, int rate = 49, int min = 0, int max = 1)
     {
         try
         {
@@ -117,34 +117,16 @@ public class Simulation : IDisposable
                             || actions.Select(x => x.ActionType).Contains(ActionType.Pickup);
     }
 
-    private async Task PickupOrders(Config config, int orderCount, CancellationToken ct)
-    {
-        while (processedOrderCount() != orderCount)
-        {
-            var localNow = _time.GetLocalNow().DateTime;
-
-            pickupOrders2(localNow, _actionRepo);
-            // todo delay exactly until next order is picked up.
-            await Task.Delay(TimeSpan.FromMicroseconds(config.rate), _time, ct);
-
-            // var ddd = new ConcurrentDictionary<string, List<Action>>() { };
-            // ddd.AddOrUpdate("1", (key, arg) => new List<Action>(), (key, currentValue, arg) => new List<Action>(), factoryArgument: 13);
-            // ddd.GetOrAdd("1", (key, arg) => new List<Action>(), factoryArgument: 13);
-        }
-    }
-
     private async Task PickupSingleOrder(PickableOrder order, CancellationToken ct)
     {
-        Console.WriteLine($"Scheduling pickup for order {order.Id}");
         DateTime localNow = _time.GetLocalNow().DateTime;
         var delayAmount = order.PickupTime - localNow;
+        // for tests, because of discrete time flow
         if (delayAmount < TimeSpan.Zero)
         {
-            // todo delete this
             // for debug / dev purposes
-            throw new Exception($"Order pickup time is in the past: {order.PickupTime:hh:mm:ss.fff} now: {localNow:hh:mm:ss.fff}");
-            // this is only for tests:
-            // delayAmount = TimeSpan.Zero;
+            // if (TimeSpan.FromMilliseconds(1) - delayAmount > TimeSpan.Zero) throw new Exception($"Process is late to initiate order pickup process by more than 1 millisecond. Pickup time: {order.PickupTime:hh:mm:ss.fff} now: {localNow:hh:mm:ss.fff}");
+            delayAmount = TimeSpan.Zero;
         }
         await Task.Delay(delayAmount, _time, ct);
         localNow = _time.GetLocalNow().DateTime;
@@ -152,17 +134,13 @@ public class Simulation : IDisposable
         {
             // todo delete this
             // for debug / dev purposes
-            throw new Exception($"Current time does not coincide with designated order pickup time: {order.PickupTime:hh:mm:ss.fff} now: {localNow:hh:mm:ss.fff}");
+            // throw new Exception($"Current time does not coincide with designated order pickup time: {order.PickupTime:hh:mm:ss.fff} now: {localNow:hh:mm:ss.fff}");
         }
-
-        Console.WriteLine($"Before pickup lock for order {order.Id} {Thread.CurrentThread.ManagedThreadId}");
 
         var semaphore = GetOrCreateRepoSemaphore(order);
         await semaphore.WaitAsync();
         try
         {
-            Console.WriteLine($"Entered pickup lock for order {order.Id} {Thread.CurrentThread.ManagedThreadId}");
-            // var orderProcessedAction = _actionRepo[order.Id];
             var orderActions = _actionRepo[order.Id].Actions;
             orderActions.Sort((x, y) => Convert.ToInt32(x.Timestamp - y.Timestamp));
             if (IsOrderProcessed(orderActions))
@@ -171,7 +149,6 @@ public class Simulation : IDisposable
             }
             if (IsFresh(order, orderActions))
             {
-                Console.WriteLine($"Before pickup for order {order.Id} {Thread.CurrentThread.ManagedThreadId}");
                 Action item = new(order.PickupTime, order.Id, ActionType.Pickup, orderActions.Last().Target);
                 Console.WriteLine($"Picking up order {item}");
                 orderActions.Add(item);
@@ -199,23 +176,20 @@ public class Simulation : IDisposable
             var pickupInMicroseconds = PickableOrder.RandomBetween(config.min, config.max);
             PickableOrder pickableOrder = new(order, localNow.AddMicroseconds(pickupInMicroseconds));
             Task task = Task.CompletedTask;
-            Console.WriteLine($"Before placement lock for order {order.Id} {Thread.CurrentThread.ManagedThreadId}");
 
             var semaphore = GetOrCreateRepoSemaphore(pickableOrder);
             await semaphore.WaitAsync();
 
             try
             {
-                Console.WriteLine($"Entered placement lock for order {order.Id} {Thread.CurrentThread.ManagedThreadId}");
                 _pickableOrders.Add(pickableOrder);
-                // todo proly dont neeed
                 task = PickupSingleOrder(pickableOrder, ct);
 
                 var actions = _actionRepo.Values.Select(x => x.Actions).SelectMany(x => x).ToList();
-                Console.WriteLine($"Before placement for order {order.Id} {Thread.CurrentThread.ManagedThreadId}");
                 if ((new[] { Target.Cooler, Target.Heater }).Contains(target))
                 {
                     // checking if == is actually sufficient
+                    // IsTargetFull()
                     if (config.storage[target] <= actions.Count(x => x.Target == target && x.ActionType == ActionType.Place))
                     {
                         _actionRepo[order.Id] = (pickableOrder, new() { });
@@ -252,41 +226,6 @@ public class Simulation : IDisposable
             await Task.Delay(TimeSpan.FromMicroseconds(config.rate), _time, ct);
 
         }
-    }
-
-    private static void pickupOrders2(DateTime localNow, Dictionary<string, (PickableOrder Order, List<Action> Actions)> actionRepo)
-    {
-        // v3 works with actions repo
-        if (true)
-        {
-            // todo: error Collection was modified; enumeration operation may not execute.
-            var pickupActions = actionRepo
-            .Where(kvp => kvp.Value.Order.PickupTime <= localNow)
-            .Select(kvp =>
-            {
-                kvp.Value.Actions.Sort((x, y) => Convert.ToInt32(x.Timestamp - y.Timestamp));
-                return kvp;
-            })
-            .Where(kvp => new[] { ActionType.Place, ActionType.Move }.Contains(kvp.Value.Actions.Last().ActionType))
-            .Select(kvp =>
-            {
-                if (IsFresh(kvp.Value.Order, kvp.Value.Actions))
-                {
-                    Action item = new(localNow, kvp.Value.Order.Id, ActionType.Pickup, kvp.Value.Actions.Last().Target);
-                    Console.WriteLine($"Picking up order {item}");
-                    kvp.Value.Actions.Add(item);
-                }
-                else
-                {
-                    Action item = new(localNow, kvp.Value.Order.Id, ActionType.Discard, kvp.Value.Actions.Last().Target);
-                    Console.WriteLine($"Discarding order {item}");
-                    kvp.Value.Actions.Add(item);
-                }
-                return kvp;
-            })
-            .ToList();
-        }
-
     }
 
     private static bool IsFresh(PickableOrder o, List<Action> a)
