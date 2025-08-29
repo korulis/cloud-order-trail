@@ -4,6 +4,10 @@ using Xunit.Abstractions;
 
 namespace Challenge.Tests;
 
+[CollectionDefinition("SequentialTest", DisableParallelization = true)]
+public class SequentialTestCollection { }
+
+[Collection("SequentialTest")]
 public class SimulateTests : IDisposable
 {
     private readonly ITestOutputHelper _output;
@@ -22,8 +26,8 @@ public class SimulateTests : IDisposable
             { Target.Shelf, 3 },
             { Target.Heater, 3 }};
         _defaultConfig = new Simulation.Config(500_000, 4_000_000, 8_000_000, storage);
-        _cts = new CancellationTokenSource(5_000);
-        // _cts = new CancellationTokenSource(5000_000);
+        // _cts = new CancellationTokenSource(5_000);
+        _cts = new CancellationTokenSource(5000_000);
 
     }
 
