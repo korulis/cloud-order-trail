@@ -297,6 +297,10 @@ public class Simulation : IDisposable
     {
         _pickableOrders.Clear();
         _actionRepo.Clear();
+        foreach (var item in _repoSemaphores)
+        {
+            item.Value.Dispose();
+        }
         _repoSemaphores.Clear();
     }
 }
