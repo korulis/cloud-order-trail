@@ -275,41 +275,41 @@ public class SimulateTests : IDisposable
         Assert.Equal(Target.Shelf, actions.First(x => x.Id == "6").Target);
     }
 
-    // [Fact()]
-    // public async Task Moves_NonShelfOrderToNonShelfStorage_WhenShelfOrderArrives()
-    // {
-    //     // Arrange
-    //     var testTarget = Target.Cooler;
-    //     var oppositeTarget = Target.Heater;
+    [Fact()]
+    public async Task Moves_NonShelfOrderToNonShelfStorage_WhenShelfOrderArrives()
+    {
+        // Arrange
+        var testTarget = Target.Cooler;
+        var oppositeTarget = Target.Heater;
 
-    //     Dictionary<string, int> storage = new() {
-    //         { Target.Cooler, 1 },
-    //         { Target.Shelf, 1 },
-    //         { Target.Heater, 999 }};
-    //     Simulation.Config expireInFiveOrdersConfig = new(1_000_000, 5_000_000, 5_000_000, storage);
+        Dictionary<string, int> storage = new() {
+            { Target.Cooler, 1 },
+            { Target.Shelf, 1 },
+            { Target.Heater, 999 }};
+        Simulation.Config expireInFiveOrdersConfig = new(1_000_000, 5_000_000, 5_000_000, storage);
 
-    //     Order orderToExpireBeforeShelfArrives = new("x1", "Banana", Temperature.Cold, 20, 50);
-    //     List<Order> timeFillingOrders1 = Enumerable
-    //         .Range(2, 3)
-    //         .Select(x => new Order("f1" + x.ToString(), "Banana", Temperature.Hot, 20, 60))
-    //         .ToList();
-    //     Order orderForcedToShelf = new("x2", "Banana", Temperature.Cold, 20, 50);
-    //     List<Order> timeFillingOrders2 = Enumerable
-    //         .Range(2, 3)
-    //         .Select(x => new Order("f2" + x.ToString(), "Banana", Temperature.Hot, 20, 60))
-    //         .ToList();
-    //     Order shelfOrder = new("x3", "Banana", Temperature.Room, 20, 50);
+        Order orderToExpireBeforeShelfArrives = new("x1", "Banana", Temperature.Cold, 20, 50);
+        List<Order> timeFillingOrders1 = Enumerable
+            .Range(2, 3)
+            .Select(x => new Order("f1" + x.ToString(), "Banana", Temperature.Hot, 20, 60))
+            .ToList();
+        Order orderForcedToShelf = new("x2", "Banana", Temperature.Cold, 20, 50);
+        List<Order> timeFillingOrders2 = Enumerable
+            .Range(2, 3)
+            .Select(x => new Order("f2" + x.ToString(), "Banana", Temperature.Hot, 20, 60))
+            .ToList();
+        Order shelfOrder = new("x3", "Banana", Temperature.Room, 20, 50);
 
-    //     List<Order> orders = [orderToExpireBeforeShelfArrives, .. timeFillingOrders1, orderForcedToShelf, .. timeFillingOrders2, shelfOrder];
+        List<Order> orders = [orderToExpireBeforeShelfArrives, .. timeFillingOrders1, orderForcedToShelf, .. timeFillingOrders2, shelfOrder];
 
-    //     // Act
-    //     var actions = await SimulateToTheEnd(expireInFiveOrdersConfig, orders, _cts.Token);
+        // Act
+        var actions = await SimulateToTheEnd(expireInFiveOrdersConfig, orders, _cts.Token);
 
-    //     // Assert
-    //     var moveActions = actions.Where(x => x.Id == "x2" && x.ActionType == ActionType.Move).ToList();
-    //     Assert.True(moveActions.Count == 1, $"Expected single {ActionType.Move} action for {"x2"} order, but found {moveActions.Count}");
-    //     Assert.Equal(Target.Cooler, moveActions.Single().Target);
-    // }
+        // Assert
+        var moveActions = actions.Where(x => x.Id == "x2" && x.ActionType == ActionType.Move).ToList();
+        Assert.True(moveActions.Count == 1, $"Expected single {ActionType.Move} action for {"x2"} order, but found {moveActions.Count}");
+        Assert.Equal(Target.Cooler, moveActions.Single().Target);
+    }
 
 
     private async Task<List<Action>> SimulateToTheEnd(Simulation.Config config, List<Order> orders, CancellationToken ct)

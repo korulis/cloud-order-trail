@@ -185,11 +185,49 @@ public class Simulation : IDisposable
                 _pickableOrders.Add(pickableOrder);
                 task = PickupSingleOrder(pickableOrder, ct);
 
-                var actions = _actionRepo.Values.Select(x => x.Actions).SelectMany(x => x).ToList();
-                if (IsNonShelf(target))
+                var allActions = _actionRepo.Values.Select(x => x.Actions).SelectMany(x => x).ToList();
+                if (IsShelf(target))
                 {
-                    if (IsFull(target, config.storage, actions))
+
+                    // place 1
+                    if (IsFull(target, config.storage, allActions))
                     {
+                        List<Action> actionsForOrdersOutOfTarget = ActionsForOrdersOutOfTarget(allActions);
+                        if (actionsForOrdersOutOfTarget.Any())
+                        {
+                            // need to move
+
+                            // get order to move from pickableOrders list or order storage without lock
+                            var orderToMoveAction = actionsForOrdersOutOfTarget.First();
+                            var orderToMove = _pickableOrders.Single(x => x.Id == orderToMoveAction.Id);
+                            // ... lock action repo with order
+                            // ... lock storage state, get order
+                            // reaquire actions from repo via order (for race condition reasons)
+                            // if action the same - ok , else assume failed, bcs sbd moved it , release lock and goto "place 1"
+
+
+
+
+
+                        }
+                        else
+                        {
+                            // need to discard
+                        }
+                    }
+                    else
+                    {
+                        _actionRepo[order.Id] = (pickableOrder, new() { });
+                        _actionRepo[order.Id].Actions.Add(new(localNow, order.Id, ActionType.Place, target));
+                        Console.WriteLine($"Order placed: {order}");
+                    }
+                }
+                else
+                {
+                    if (IsFull(target, config.storage, allActions))
+                    {
+                        // todo kb: need to try put in shelf
+                        // temp implementation:
                         // add action repo entry
                         _actionRepo[order.Id] = (pickableOrder, new() { });
                         // update action repo entry
@@ -202,12 +240,6 @@ public class Simulation : IDisposable
                         _actionRepo[order.Id].Actions.Add(new(localNow, order.Id, ActionType.Place, target));
                         Console.WriteLine($"Order placed: {order}");
                     }
-                }
-                else
-                {
-                    _actionRepo[order.Id] = (pickableOrder, new() { });
-                    _actionRepo[order.Id].Actions.Add(new(localNow, order.Id, ActionType.Place, target));
-                    Console.WriteLine($"Order placed: {order}");
                 }
             }
             finally
@@ -228,15 +260,20 @@ public class Simulation : IDisposable
         }
     }
 
-    private static bool IsFull(string target, Dictionary<string, int> storage, List<Action> actions)
+    private List<Action> ActionsForOrdersOutOfTarget(List<Action> actions)
     {
-        // checking if == is actually sufficient
-        return storage[target] <= actions.Count(x => x.Target == target && x.ActionType == ActionType.Place);
+        throw new NotImplementedException();
     }
 
-    private static bool IsNonShelf(string target)
+    private static bool IsFull(string target, Dictionary<string, int> storage, List<Action> allActions)
     {
-        return (new[] { Target.Cooler, Target.Heater }).Contains(target);
+        // checking if == is actually sufficient
+        return storage[target] <= allActions.Count(x => x.Target == target && x.ActionType == ActionType.Place);
+    }
+
+    private static bool IsShelf(string target)
+    {
+        return target == Target.Shelf;
     }
 
     private static bool IsFresh(PickableOrder o, List<Action> a)
