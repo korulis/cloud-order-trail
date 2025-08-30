@@ -21,13 +21,13 @@ public class SimulateTests : IDisposable
         _output = output;
         _timeProvider = new FakeTimeProvider();
         _sut = new Simulation(_timeProvider);
-        var storage = new Dictionary<string, int>() {
+        Dictionary<string, int> storage = new() {
             { Target.Cooler, 3 },
             { Target.Shelf, 3 },
             { Target.Heater, 3 }};
-        _defaultConfig = new Simulation.Config(500_000, 4_000_000, 8_000_000, storage);
-        // _cts = new CancellationTokenSource(5_000);
-        _cts = new CancellationTokenSource(5000_000);
+        _defaultConfig = new Simulation.Config(500_000, 6_000_000, 8_000_000, storage);
+        _cts = new CancellationTokenSource(5_000);
+        // _cts = new CancellationTokenSource(5000_000);
 
     }
 
@@ -68,6 +68,32 @@ public class SimulateTests : IDisposable
     }
 
     [Fact()]
+    public async Task PicksUp_SingleOrderFromEachTarget()
+    {
+        // Arrange
+        List<Order> orders = [
+            new("1", "Banana", Temperature.Cold, 20, 50),
+            new("2", "Banana", Temperature.Room, 15, 40),
+            new("3", "Banana", Temperature.Hot, 10, 30)
+        ];
+
+        // Act
+        var actions = await SimulateToTheEnd(_defaultConfig, orders, _cts.Token);
+
+        // Assert
+        var pickupActionTargets = actions
+        .Where(x => x.ActionType == ActionType.Pickup)
+        .Select(x => x.Target)
+        .ToList();
+        Assert.True(pickupActionTargets.Count == 3);
+        Assert.Contains(Target.Shelf, pickupActionTargets);
+        Assert.Contains(Target.Cooler, pickupActionTargets);
+        Assert.Contains(Target.Heater, pickupActionTargets);
+
+    }
+
+
+    [Fact()]
     public async Task PicksUp_SingleOrderAtViablePickupTime()
     {
         // Arrange
@@ -92,7 +118,43 @@ public class SimulateTests : IDisposable
     }
 
     [Fact()]
-    public async Task Puts_SingleOrderInEachSpot()
+    public async Task PicksUp_SeveralOrdersFromSeveralTargetsAtViablePickupTime()
+    {
+        // Arrange
+        var config = _defaultConfig;
+        List<Order> orders = [
+            new("1", "Banana", Temperature.Cold, 20, 50),
+            new("2", "Banana", Temperature.Room, 15, 40),
+            new("3", "Banana", Temperature.Hot, 10, 30),
+            new("4", "Banana", Temperature.Cold, 20, 50),
+            new("5", "Banana", Temperature.Room, 15, 40),
+            new("6", "Banana", Temperature.Hot, 10, 30),
+            new("7", "Banana", Temperature.Cold, 20, 50),
+            new("8", "Banana", Temperature.Room, 15, 40),
+            new("9", "Banana", Temperature.Hot, 10, 30),
+
+        ];
+
+        // Act
+        var actions = await SimulateToTheEnd(config, orders, _cts.Token);
+
+        // Assert
+        foreach (var order in orders)
+        {
+            var pickupActions = actions.Where(x => x.ActionType == ActionType.Pickup && x.Id == order.Id).ToList();
+            Assert.True(1 == pickupActions.Count, $"Expected 1 pickup action for order {order.Id}, received : {JsonSerializer.Serialize(pickupActions)}");
+            var actualPickupTime = pickupActions[0].GetOriginalTimestamp();
+            var placingTime = actions.Single(x => x.ActionType == ActionType.Place && x.Id == order.Id).GetOriginalTimestamp();
+            var minPickupTime = placingTime.AddMicroseconds(config.min);
+            var maxPickupTime = placingTime.AddMicroseconds(config.max);
+            Assert.True(
+                actualPickupTime >= minPickupTime && actualPickupTime <= maxPickupTime,
+                $"Pick up happenned {actualPickupTime:hh:mm:ss.fff} outside of expected pickup interval [{minPickupTime:hh:mm:ss.fff}, {maxPickupTime:hh:mm:ss.fff}]");
+        }
+    }
+
+    [Fact()]
+    public async Task Puts_SingleOrderInEachTarget()
     {
         // Arrange
         List<Order> orders = [
@@ -129,10 +191,40 @@ public class SimulateTests : IDisposable
             $"Not all orders were put in the cooler: {string.Join(",", actions.Where(x => x.ActionType == ActionType.Place).Select(x => x.Target))}");
     }
 
+    [Fact()]
+    public async Task Puts_SeveralOrdersIntoCorrespondingTargets()
+    {
+        // Arrange
+        var config = _defaultConfig;
+        List<Order> orders = [
+            new("1", "Banana", Temperature.Cold, 20, 50),
+            new("2", "Banana", Temperature.Room, 15, 40),
+            new("3", "Banana", Temperature.Hot, 10, 30),
+            new("4", "Banana", Temperature.Cold, 20, 50),
+            new("5", "Banana", Temperature.Room, 15, 40),
+            new("6", "Banana", Temperature.Hot, 10, 30),
+            new("7", "Banana", Temperature.Cold, 20, 50),
+            new("8", "Banana", Temperature.Room, 15, 40),
+            new("9", "Banana", Temperature.Hot, 10, 30),
+
+        ];
+
+        // Act
+        var actions = await SimulateToTheEnd(config, orders, _cts.Token);
+
+        // Assert
+        foreach (var order in orders)
+        {
+            var pickupTarget = actions.Single(x => x.ActionType == ActionType.Pickup && x.Id == order.Id).Target;
+            var placementTarget = actions.Single(x => x.ActionType == ActionType.Place && x.Id == order.Id).Target;
+            Assert.Equal(placementTarget, pickupTarget);
+        }
+    }
+
     [Theory()]
     [InlineData(Temperature.Cold)]
     [InlineData(Temperature.Hot)]
-    public async Task Puts_ColdOrHotOrderOnShelf_WhenCoolerOrHeaterIsFullRespectively(string temperature)
+    public async Task Puts_NonShelfOrderOnShelf_WhenRespectiveNonShelfTargetIsFull(string temperature)
     {
         // Arrange
         var target = Simulation.ToTarget(temperature);
@@ -154,10 +246,77 @@ public class SimulateTests : IDisposable
         Assert.Equal(Target.Shelf, actions.First(x => x.Id == "2").Target);
     }
 
+    [Fact()]
+    public async Task Puts_AllColdOrdersOnShelf_WhenCoolerIsFull()
+    {
+        // Arrange
+        var config = _defaultConfig;
+        List<Order> coolerFillingOrders = [
+            new("1", "Banana", Temperature.Cold, 20, 50),
+            new("2", "Banana", Temperature.Cold, 15, 40),
+            new("3", "Banana", Temperature.Cold, 10, 30),
+
+        ];
+
+        List<Order> extraOrders = [
+            new("4", "Banana", Temperature.Cold, 20, 50),
+            new("5", "Banana", Temperature.Cold, 15, 40),
+            new("6", "Banana", Temperature.Cold, 10, 30),
+
+        ];
+        List<Order> orders = [.. coolerFillingOrders, .. extraOrders];
+
+        // Act
+        var actions = await SimulateToTheEnd(config, orders, _cts.Token);
+
+        // Assert
+        Assert.Equal(Target.Shelf, actions.First(x => x.Id == "4").Target);
+        Assert.Equal(Target.Shelf, actions.First(x => x.Id == "5").Target);
+        Assert.Equal(Target.Shelf, actions.First(x => x.Id == "6").Target);
+    }
+
+    // [Fact()]
+    // public async Task Moves_NonShelfOrderToNonShelfStorage_WhenShelfOrderArrives()
+    // {
+    //     // Arrange
+    //     var testTarget = Target.Cooler;
+    //     var oppositeTarget = Target.Heater;
+
+    //     Dictionary<string, int> storage = new() {
+    //         { Target.Cooler, 1 },
+    //         { Target.Shelf, 1 },
+    //         { Target.Heater, 999 }};
+    //     Simulation.Config expireInFiveOrdersConfig = new(1_000_000, 5_000_000, 5_000_000, storage);
+
+    //     Order orderToExpireBeforeShelfArrives = new("x1", "Banana", Temperature.Cold, 20, 50);
+    //     List<Order> timeFillingOrders1 = Enumerable
+    //         .Range(2, 3)
+    //         .Select(x => new Order("f1" + x.ToString(), "Banana", Temperature.Hot, 20, 60))
+    //         .ToList();
+    //     Order orderForcedToShelf = new("x2", "Banana", Temperature.Cold, 20, 50);
+    //     List<Order> timeFillingOrders2 = Enumerable
+    //         .Range(2, 3)
+    //         .Select(x => new Order("f2" + x.ToString(), "Banana", Temperature.Hot, 20, 60))
+    //         .ToList();
+    //     Order shelfOrder = new("x3", "Banana", Temperature.Room, 20, 50);
+
+    //     List<Order> orders = [orderToExpireBeforeShelfArrives, .. timeFillingOrders1, orderForcedToShelf, .. timeFillingOrders2, shelfOrder];
+
+    //     // Act
+    //     var actions = await SimulateToTheEnd(expireInFiveOrdersConfig, orders, _cts.Token);
+
+    //     // Assert
+    //     var moveActions = actions.Where(x => x.Id == "x2" && x.ActionType == ActionType.Move).ToList();
+    //     Assert.True(moveActions.Count == 1, $"Expected single {ActionType.Move} action for {"x2"} order, but found {moveActions.Count}");
+    //     Assert.Equal(Target.Cooler, moveActions.Single().Target);
+    // }
+
+
     private async Task<List<Action>> SimulateToTheEnd(Simulation.Config config, List<Order> orders, CancellationToken ct)
     {
         // make time increment steps slightly more granular than simulation steps or pickup interval.
         var minStep = Math.Min(config.rate, config.max - config.min) / 2;
+        minStep = minStep == 0 ? 1 : minStep;
 
         var actionsTask = _sut.Simulate(config, orders, ct);
         while (actionsTask.IsCompleted == false)

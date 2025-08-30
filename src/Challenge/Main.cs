@@ -186,13 +186,13 @@ public class Simulation : IDisposable
                 task = PickupSingleOrder(pickableOrder, ct);
 
                 var actions = _actionRepo.Values.Select(x => x.Actions).SelectMany(x => x).ToList();
-                if ((new[] { Target.Cooler, Target.Heater }).Contains(target))
+                if (IsNonShelf(target))
                 {
-                    // checking if == is actually sufficient
-                    // IsTargetFull()
-                    if (config.storage[target] <= actions.Count(x => x.Target == target && x.ActionType == ActionType.Place))
+                    if (IsFull(target, config.storage, actions))
                     {
+                        // add action repo entry
                         _actionRepo[order.Id] = (pickableOrder, new() { });
+                        // update action repo entry
                         _actionRepo[order.Id].Actions.Add(new(localNow, order.Id, ActionType.Place, Target.Shelf));
                         Console.WriteLine($"Order placed: {order}");
                     }
@@ -226,6 +226,17 @@ public class Simulation : IDisposable
             await Task.Delay(TimeSpan.FromMicroseconds(config.rate), _time, ct);
 
         }
+    }
+
+    private static bool IsFull(string target, Dictionary<string, int> storage, List<Action> actions)
+    {
+        // checking if == is actually sufficient
+        return storage[target] <= actions.Count(x => x.Target == target && x.ActionType == ActionType.Place);
+    }
+
+    private static bool IsNonShelf(string target)
+    {
+        return (new[] { Target.Cooler, Target.Heater }).Contains(target);
     }
 
     private static bool IsFresh(PickableOrder o, List<Action> a)
