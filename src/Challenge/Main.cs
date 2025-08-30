@@ -55,16 +55,52 @@ class Challenge
     }
 }
 
+public class RepoSemaphore : IDisposable
+{
+    private readonly SemaphoreSlim _slim;
+    private bool _isDisposed = false;
+
+    public RepoSemaphore()
+    {
+        _slim = new SemaphoreSlim(1, 1);
+    }
+
+    public Task WaitAsync()
+    {
+        if (_isDisposed)
+        {
+            throw new ObjectDisposedException(nameof(RepoSemaphore), "Cannot perform work on a disposed object.");
+        }
+        return _slim.WaitAsync();
+    }
+    public void Dispose()
+    {
+        if (_isDisposed)
+        {
+            throw new ObjectDisposedException(nameof(RepoSemaphore), "Cannot perform work on a disposed object.");
+        }
+        _slim.Release();
+    }
+
+    public void DisposeUndelying()
+    {
+        _slim.Dispose();
+        _isDisposed = true;
+    }
+}
+
 public class Simulation : IDisposable
 {
     private static readonly List<PickableOrder> _pickableOrders = [];
     private static readonly Dictionary<string, (PickableOrder Order, List<Action> Actions)> _actionRepo = new() { };
 
-    private readonly ConcurrentDictionary<PickableOrder, SemaphoreSlim> _repoSemaphores = new();
+    private readonly ConcurrentDictionary<PickableOrder, RepoSemaphore> _repoSemaphores = new();
 
-    private SemaphoreSlim GetOrCreateRepoSemaphore(PickableOrder order)
+    private async Task<RepoSemaphore> GetOrCreateWaitingRepoSemaphore(PickableOrder order)
     {
-        return _repoSemaphores.GetOrAdd(order, new SemaphoreSlim(1, 1));
+        var semaphore = _repoSemaphores.GetOrAdd(order, new RepoSemaphore());
+        await semaphore.WaitAsync();
+        return semaphore;
     }
 
 
@@ -106,10 +142,6 @@ public class Simulation : IDisposable
         return result;
     }
 
-    private int processedOrderCount() => _actionRepo
-                .Select(kvp => kvp.Value.Actions)
-                .Count(IsOrderProcessed);
-
     private static bool IsOrderProcessed(IEnumerable<Action> actions)
     {
         // todo could be optimised if we can afford to assume actions are sorted by timestamp
@@ -137,9 +169,7 @@ public class Simulation : IDisposable
             // throw new Exception($"Current time does not coincide with designated order pickup time: {order.PickupTime:hh:mm:ss.fff} now: {localNow:hh:mm:ss.fff}");
         }
 
-        var semaphore = GetOrCreateRepoSemaphore(order);
-        await semaphore.WaitAsync();
-        try
+        using (var semaphore = await GetOrCreateWaitingRepoSemaphore(order))
         {
             var orderActions = _actionRepo[order.Id].Actions;
             orderActions.Sort((x, y) => Convert.ToInt32(x.Timestamp - y.Timestamp));
@@ -160,10 +190,6 @@ public class Simulation : IDisposable
                 orderActions.Add(item);
             }
         }
-        finally
-        {
-            semaphore.Release();
-        }
     }
 
     private async IAsyncEnumerable<Task> PlaceOrders(Config config, List<Order> orders, [EnumeratorCancellation] CancellationToken ct)
@@ -177,10 +203,7 @@ public class Simulation : IDisposable
             PickableOrder pickableOrder = new(order, localNow.AddMicroseconds(pickupInMicroseconds));
             Task task = Task.CompletedTask;
 
-            var semaphore = GetOrCreateRepoSemaphore(pickableOrder);
-            await semaphore.WaitAsync();
-
-            try
+            using (var placeSemaphore = await GetOrCreateWaitingRepoSemaphore(pickableOrder))
             {
                 _pickableOrders.Add(pickableOrder);
                 task = PickupSingleOrder(pickableOrder, ct);
@@ -205,6 +228,11 @@ public class Simulation : IDisposable
                             // reaquire actions from repo via order (for race condition reasons)
                             // if action the same - ok , else assume failed, bcs sbd moved it , release lock and goto "place 1"
 
+                            using (var moveSemaphore = await GetOrCreateWaitingRepoSemaphore(orderToMove))
+                            {
+
+
+                            }
 
 
 
@@ -241,10 +269,6 @@ public class Simulation : IDisposable
                         Console.WriteLine($"Order placed: {order}");
                     }
                 }
-            }
-            finally
-            {
-                semaphore.Release();
             }
 
             if (task == Task.CompletedTask)
@@ -299,7 +323,7 @@ public class Simulation : IDisposable
         _actionRepo.Clear();
         foreach (var item in _repoSemaphores)
         {
-            item.Value.Dispose();
+            item.Value.DisposeUndelying();
         }
         _repoSemaphores.Clear();
     }
