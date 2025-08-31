@@ -2,6 +2,13 @@
 
 Author: `Karolis Blazevicius`
 
+## How to run tests
+If dotnet `8.0` or later is locally installed:
+```
+$ cd test/Challenge.Tests/
+$ dotnet test 
+```
+
 ## How to run
 
 The `Dockerfile` defines a self-contained C# reference environment.
@@ -14,7 +21,7 @@ Feel free to modify the `Dockerfile` as you see fit.
 
 If dotnet `8.0` or later is locally installed, run the program directly for convenience:
 ```
-$ cd Challenge
+$ cd src/Challenge
 $ dotnet run -- --auth <token>
 ```
 
