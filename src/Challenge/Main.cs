@@ -17,7 +17,7 @@ class Challenge
     /// <param name="rate">Inverse order rate (in milliseconds)</param>
     /// <param name="min">Minimum pickup time (in seconds)</param>
     /// <param name="max">Maximum pickup time (in seconds)</param>
-    static async Task Main(string auth, string endpoint = "https://api.cloudkitchens.com", string name = "", long seed = 0, int rate = 49, int min = 1, int max = 2)
+    static async Task Main(string auth, string endpoint = "https://api.cloudkitchens.com", string name = "", long seed = 0, int rate = 500, int min = 4, int max = 8)
     {
         try
         {
