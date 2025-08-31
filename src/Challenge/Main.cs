@@ -22,37 +22,48 @@ class Challenge
         try
         {
             var client = new Client(endpoint, auth);
-            var problem = await client.NewProblemAsync(name, seed);
-
-            // ------ Simulation harness logic goes here using rate, min and max ----
-            var storageLimits = new Dictionary<string, int>()
-            {
-                { Target.Cooler, 6 },
-                { Target.Shelf, 12 },
-                { Target.Heater, 6 }
-            };
-            var orders = problem.Orders;
-            var simulation = new Simulation(TimeProvider.System);
-            List<Action> actions = await simulation.Simulate(
-                new Simulation.Config(rate * 1000, min * 1000_000, max * 1000_000, storageLimits),
-                orders,
-                CancellationToken.None);
-
-            // ----------------------------------------------------------------------
-
-            var result = await client.SolveAsync(
-                problem.TestId,
-                TimeSpan.FromMilliseconds(rate),
-                TimeSpan.FromSeconds(min),
-                TimeSpan.FromSeconds(max),
-                actions);
-            Console.WriteLine($"Result: {result}");
+            // foreach (var seed1 in new[] { 0, 0, 0, 0 })
+            //     foreach (var rate1 in new[] { 50, 500 })
+            //         foreach (var (min1, max1) in new[] { (0, 1), (4, 8), (20, 50) })
+            //         {
+            //             await SolveChallenge(name, seed1, rate1, min1, max1, client);
+            //         }
+            await SolveChallenge(name, seed, rate, min, max, client);
 
         }
         catch (Exception e)
         {
             Console.WriteLine($"Simulation failed: {e}");
         }
+    }
+
+    private static async Task SolveChallenge(string name, long seed, int rate, int min, int max, Client client)
+    {
+        var problem = await client.NewProblemAsync(name, seed);
+
+        // ------ Simulation harness logic goes here using rate, min and max ----
+        var storageLimits = new Dictionary<string, int>()
+            {
+                { Target.Cooler, 6 },
+                { Target.Shelf, 12 },
+                { Target.Heater, 6 }
+            };
+        var orders = problem.Orders;
+        var simulation = new Simulation(TimeProvider.System);
+        List<Action> actions = await simulation.Simulate(
+            new Simulation.Config(rate * 1000, min * 1000_000, max * 1000_000, storageLimits),
+            orders,
+            CancellationToken.None);
+
+        // ----------------------------------------------------------------------
+
+        var result = await client.SolveAsync(
+            problem.TestId,
+            TimeSpan.FromMilliseconds(rate),
+            TimeSpan.FromSeconds(min),
+            TimeSpan.FromSeconds(max),
+            actions);
+        Console.WriteLine($"Result: {result}");
     }
 }
 
