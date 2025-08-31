@@ -335,7 +335,43 @@ public class SimulateTests : IDisposable
         Assert.Equal(Simulation.ToTarget(testTemp), moveActions.Single().Target);
     }
 
+    [Theory()]
+    [InlineData(Temperature.Cold, Temperature.Hot)]
+    [InlineData(Temperature.Hot, Temperature.Cold)]
 
+    public async Task Moves_OppositeOrderToOppositeStorage_WhenNonShelfOrderArrives(string nonShelfTemp, string oppositeTemp)
+    {
+        // Arrange
+        Dictionary<string, int> storageLimits = new() {
+            { Simulation.ToTarget(nonShelfTemp), 1},
+            { Target.Shelf, 3 },
+            { Simulation.ToTarget(oppositeTemp), 1}};
+        Simulation.Config expireInFiveOrdersConfig = new(1_000_000, 4_800_000, 4_900_000, storageLimits);
+
+        Order oppositeOrderToPickup = new("o1", "Banana", oppositeTemp, 20, 50);
+        List<Order> timeFillingOrders1 = Enumerable
+            .Range(1, 2)
+            .Select(x => new Order("s1." + x.ToString(), "Banana", Temperature.Room, 20, 60))
+            .ToList();
+        Order oppositeOrderToBeMoved = new("o2", "Banana", oppositeTemp, 20, 50);
+        List<Order> timeFillingOrders2 = Enumerable
+            .Range(1, 1)
+            .Select(x => new Order("s2." + x.ToString(), "Banana", Temperature.Room, 20, 60))
+            .ToList();
+        Order nonShelfOrder = new("x1", "Banana", nonShelfTemp, 20, 50);
+        Order nonShelfOrderToTriggerMove = new("x2", "Banana", nonShelfTemp, 20, 50);
+
+        List<Order> orders = [oppositeOrderToPickup, .. timeFillingOrders1, oppositeOrderToBeMoved, .. timeFillingOrders2, nonShelfOrder, nonShelfOrderToTriggerMove];
+
+        // Act
+        var actions = await SimulateToTheEnd(expireInFiveOrdersConfig, orders, _cts.Token);
+
+        // Assert
+        Assert.True(actions.Where(x =>
+        x.Id == oppositeOrderToBeMoved.Id
+        && x.ActionType == ActionType.Move
+        && x.Target == Simulation.ToTarget(oppositeTemp)).Count() == 1, $"Actions {ActionsForErrorMessage(actions)}");
+    }
 
     private static string ActionsForErrorMessage(List<Action> actions)
     {

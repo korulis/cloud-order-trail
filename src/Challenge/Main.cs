@@ -16,7 +16,7 @@ class Challenge
     /// <param name="rate">Inverse order rate (in milliseconds)</param>
     /// <param name="min">Minimum pickup time (in seconds)</param>
     /// <param name="max">Maximum pickup time (in seconds)</param>
-    static async Task Main(string auth, string endpoint = "https://api.cloudkitchens.com", string name = "", long seed = 0, int rate = 49, int min = 0, int max = 1)
+    static async Task Main(string auth, string endpoint = "https://api.cloudkitchens.com", string name = "", long seed = 0, int rate = 49, int min = 1, int max = 2)
     {
         try
         {
@@ -182,26 +182,26 @@ public class Simulation : IDisposable
             }
             else
             {
-                Action item = new(order.PickupTime, order.Id, ActionType.Discard, orderActions.Last().Target);
-                orderActions.Add(item);
-                Console.WriteLine($"Discarding order {item}");
+                // Action item = new(order.PickupTime, order.Id, ActionType.Discard, orderActions.Last().Target);
+                // orderActions.Add(item);
+                // Console.WriteLine($"Discarding order {item}");
             }
         }
     }
 
     private async IAsyncEnumerable<Task> PlaceOrders(Config config, List<Order> orders, [EnumeratorCancellation] CancellationToken ct)
     {
-        foreach (var order in orders)
+        foreach (var simpleOrder in orders)
         {
             var localNow = _time.GetLocalNow().DateTime;
-            if (order.Id == "o2")
+            if (simpleOrder.Id == "o2")
             {
-                Console.WriteLine($"AAAAAAAAAAAa Starting pickup {new Action(localNow, order.Id, ActionType.Pickup, order.Temp)}");
+                Console.WriteLine($"AAAAAAAAAAAa Starting pickup {new Action(localNow, simpleOrder.Id, ActionType.Pickup, simpleOrder.Temp)}");
             }
-            var target = ToTarget(order.Temp);
+            var target = ToTarget(simpleOrder.Temp);
 
             var pickupInMicroseconds = PickableOrder.RandomBetween(config.min, config.max);
-            PickableOrder pickableOrder = new(order, localNow.AddMicroseconds(pickupInMicroseconds));
+            PickableOrder pickableOrder = new(simpleOrder, localNow.AddMicroseconds(pickupInMicroseconds));
             Task task = Task.CompletedTask;
 
             using (var placeSemaphore = await GetOrCreateWaitingRepoSemaphore(pickableOrder, ct))
@@ -212,85 +212,17 @@ public class Simulation : IDisposable
                 var actions = _actionRepo.Values.Select(x => x.Actions).SelectMany(x => x).ToList();
                 if (IsShelf(target))
                 {
-                    if (IsFull_Flawed(target, config.storageLimits, _actionRepo))
-                    {
-                        // move / discard
-                        var kvpsWithOrdersOnTarget = KvpsWithOrdersOnTarget(_actionRepo, target);
-                        if (!kvpsWithOrdersOnTarget.Any())
-                        {
-                            // handle error from race condition
-                            throw new Exception("the list is migh be empty bcs of race condition");
-                        }
-                        var entriesForOrdersToMove = EntriesForForeignOrdersOnTarget(kvpsWithOrdersOnTarget);
-                        PickableOrder? orderToMove = null;
-
-                        foreach (var entryForOrderToMove in entriesForOrdersToMove)
-                        {
-
-                            //         // try move from shelf
-                            var targetToMoveTo = ToTarget(entryForOrderToMove.Order.Temp);
-                            Console.WriteLine("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAa " + entryForOrderToMove.Order.Id);
-                            if (!IsFull_Flawed(targetToMoveTo, config.storageLimits, _actionRepo))
-                            {
-                                orderToMove = entryForOrderToMove.Order;
-                                break;
-                            }
-
-                        } //end for
-
-                        if (orderToMove is not null)
-                        {
-                            using var moveSemaphore = await GetOrCreateWaitingRepoSemaphore(orderToMove, ct);
-                            // check if can move first
-                            // if can not move handle error from race condition.
-                            Action moveAction = new(_time.GetLocalNow().DateTime, orderToMove.Id, ActionType.Move, ToTarget(orderToMove.Temp));
-                            _actionRepo[orderToMove.Id].Actions.Add(
-                                              moveAction);
-                            Console.WriteLine($"Moving order: {moveAction}");
-                        }
-                        else
-                        {
-                            var kvpToDiscard = CalculateOrderToDiscard(kvpsWithOrdersOnTarget);
-                            // need to discard
-                            var orderToDiscard = kvpToDiscard.Value.Order;
-                            using var discardSemaphore = await GetOrCreateWaitingRepoSemaphore(orderToDiscard, ct);
-                            // check if can discard
-                            // if can not discard ... assume moved or processed .. therefore do nothing.
-                            // _actionRepo[orderToDiscard.Id].Actions.Add(
-                            //     new Action(_time.GetLocalNow().DateTime, orderToDiscard.Id, ActionType.Discard, kvpToDiscard.Value.Actions.Last().Target));
-                            // Console.WriteLine($"Placing order: {action}");
-                        }
-
-
-                    }
-
-                    // todo kb: should exit placement and reenter instead.
-                    // place after move/discard
-                    _actionRepo[order.Id] = (pickableOrder, new() { });
-                    Action action = new(localNow, order.Id, ActionType.Place, target);
-                    _actionRepo[order.Id].Actions.Add(action);
-                    Console.WriteLine($"Placing order: {action}");
+                    await TryPlaceOnShelf(config, localNow, pickableOrder, ct);
                 }
                 else
                 {
-                    if (IsFull_Flawed(target, config.storageLimits, _actionRepo))
+                    if (IsFull(target, config.storageLimits, _actionRepo))
                     {
-                        Console.WriteLine("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAa " + entryForOrderToMove.Order.Id);
-
-                        // add action repo entry
-                        _actionRepo[order.Id] = (pickableOrder, new() { });
-                        // update action repo entry
-                        Action action = new(localNow, order.Id, ActionType.Place, Target.Shelf);
-                        _actionRepo[order.Id].Actions.Add(action);
-                        Console.WriteLine($"Placing order: {action}");
+                        await TryPlaceOnShelf(config, localNow, pickableOrder, ct);
                     }
                     else
                     {
-                        _actionRepo[order.Id] = (pickableOrder, new() { });
-                        Action action = new(localNow, order.Id, ActionType.Place, target);
-                        _actionRepo[order.Id].Actions.Add(action);
-                        Console.WriteLine($"Placing order: {action}");
-
+                        PlaceOrderOnTarget(localNow, target, pickableOrder);
                     }
                 }
 
@@ -307,8 +239,78 @@ public class Simulation : IDisposable
         }
     }
 
+    private static void PlaceOrderOnTarget(DateTime localNow, string target, PickableOrder pickableOrder)
+    {
+        _actionRepo[pickableOrder.Id] = (pickableOrder, new() { });
+        Action action = new(localNow, pickableOrder.Id, ActionType.Place, target);
+        _actionRepo[pickableOrder.Id].Actions.Add(action);
+        Console.WriteLine($"Placing order: {action}");
+    }
+
+    private async Task TryPlaceOnShelf(Config config, DateTime localNow, PickableOrder pickableOrder, CancellationToken ct)
+    {
+        var target = Target.Shelf;
+        if (IsFull(target, config.storageLimits, _actionRepo))
+        {
+            // move / discard
+            var kvpsWithOrdersOnTarget = KvpsWithOrdersOnTarget(_actionRepo, target);
+            if (!kvpsWithOrdersOnTarget.Any())
+            {
+                // handle error from race condition
+                throw new Exception("the list is migh be empty bcs of race condition");
+            }
+            var entriesForOrdersToMove = EntriesForForeignOrdersOnTarget(kvpsWithOrdersOnTarget);
+            PickableOrder? orderToMove = null;
+
+            foreach (var entryForOrderToMove in entriesForOrdersToMove)
+            {
+
+                //         // try move from shelf
+                var targetToMoveTo = ToTarget(entryForOrderToMove.Order.Temp);
+                // Console.WriteLine("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAa " + entryForOrderToMove.Order.Id);
+                if (!IsFull(targetToMoveTo, config.storageLimits, _actionRepo))
+                {
+                    orderToMove = entryForOrderToMove.Order;
+                    break;
+                }
+
+            } //end for
+
+            if (orderToMove is not null)
+            {
+                using var moveSemaphore = await GetOrCreateWaitingRepoSemaphore(orderToMove, ct);
+                // check if can move first
+                // if can not move handle error from race condition.
+                Action moveAction = new(_time.GetLocalNow().DateTime, orderToMove.Id, ActionType.Move, ToTarget(orderToMove.Temp));
+                _actionRepo[orderToMove.Id].Actions.Add(
+                                  moveAction);
+                Console.WriteLine($"Moving order: {moveAction}");
+            }
+            else
+            {
+                var kvpToDiscard = CalculateOrderToDiscard(kvpsWithOrdersOnTarget);
+                // need to discard
+                var orderToDiscard = kvpToDiscard.Value.Order;
+                using var discardSemaphore = await GetOrCreateWaitingRepoSemaphore(orderToDiscard, ct);
+                // check if can discard
+                // if can not discard ... assume moved or processed .. therefore do nothing.
+                // _actionRepo[orderToDiscard.Id].Actions.Add(
+                //     new Action(_time.GetLocalNow().DateTime, orderToDiscard.Id, ActionType.Discard, kvpToDiscard.Value.Actions.Last().Target));
+                // Console.WriteLine($"Placing order: {action}");
+            }
+
+
+        }
+
+        // todo kb: should exit placement and reenter instead.
+        // place after move/discard
+        PlaceOrderOnTarget(localNow, target, pickableOrder);
+    }
+
+
+
     private KeyValuePair<string, (PickableOrder Order, List<Action> Actions)> CalculateOrderToDiscard(
-        List<KeyValuePair<string, (PickableOrder Order, List<Action> Actions)>> kvpsWithOrdersOnTarget)
+            List<KeyValuePair<string, (PickableOrder Order, List<Action> Actions)>> kvpsWithOrdersOnTarget)
     {
         // temp implementation
         return kvpsWithOrdersOnTarget.First();
@@ -343,7 +345,7 @@ public class Simulation : IDisposable
         return result;
     }
 
-    private static bool IsFull_Flawed(
+    private static bool IsFull(
         string target,
         Dictionary<string, int> storageLimits,
         Dictionary<string, (PickableOrder Order, List<Action> Actions)> _actionRepo)
