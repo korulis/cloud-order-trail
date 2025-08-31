@@ -24,7 +24,7 @@ class Challenge
             var problem = await client.NewProblemAsync(name, seed);
 
             // ------ Simulation harness logic goes here using rate, min and max ----
-            var storage = new Dictionary<string, int>()
+            var storageLimits = new Dictionary<string, int>()
             {
                 { Target.Cooler, 6 },
                 { Target.Shelf, 12 },
@@ -33,7 +33,7 @@ class Challenge
             var orders = problem.Orders;
             var simulation = new Simulation(TimeProvider.System);
             List<Action> actions = await simulation.Simulate(
-                new Simulation.Config(rate * 1000, min * 1000_000, max * 1000_000, storage),
+                new Simulation.Config(rate * 1000, min * 1000_000, max * 1000_000, storageLimits),
                 orders,
                 CancellationToken.None);
 
@@ -110,8 +110,8 @@ public class Simulation : IDisposable
     /// <param name="rate">rate of order arrival in microseconds</param>
     /// <param name="min">minimum amount of microseconds before order is picked</param>
     /// <param name="max">maximum amount of microseconds before order is picked</param>
-    /// <param name="storage"> storage limits for different kinds of storage</param>
-    public record Config(long rate, long min, long max, Dictionary<string, int> storage);
+    /// <param name="storageLimits"> storage limits for different kinds of storage</param>
+    public record Config(long rate, long min, long max, Dictionary<string, int> storageLimits);
 
     private readonly TimeProvider _time;
 
@@ -215,7 +215,7 @@ public class Simulation : IDisposable
                 var actions = _actionRepo.Values.Select(x => x.Actions).SelectMany(x => x).ToList();
                 if (IsNonShelf(target))
                 {
-                    if (IsFull(target, config.storage, actions))
+                    if (IsFull(target, config.storageLimits, actions))
                     {
                         // add action repo entry
                         _actionRepo[order.Id] = (pickableOrder, new() { });
@@ -251,10 +251,10 @@ public class Simulation : IDisposable
         }
     }
 
-    private static bool IsFull(string target, Dictionary<string, int> storage, List<Action> actions)
+    private static bool IsFull(string target, Dictionary<string, int> storageLimits, List<Action> actions)
     {
         // checking if == is actually sufficient
-        return storage[target] <= actions.Count(x => x.Target == target && x.ActionType == ActionType.Place);
+        return storageLimits[target] <= actions.Count(x => x.Target == target && x.ActionType == ActionType.Place);
     }
 
     private static bool IsNonShelf(string target)

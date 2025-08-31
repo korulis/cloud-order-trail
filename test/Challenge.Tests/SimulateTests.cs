@@ -21,11 +21,11 @@ public class SimulateTests : IDisposable
         _output = output;
         _timeProvider = new FakeTimeProvider();
         _sut = new Simulation(_timeProvider);
-        Dictionary<string, int> storage = new() {
+        Dictionary<string, int> storageLimits = new() {
             { Target.Cooler, 3 },
             { Target.Shelf, 3 },
             { Target.Heater, 3 }};
-        _defaultConfig = new Simulation.Config(500_000, 6_000_000, 8_000_000, storage);
+        _defaultConfig = new Simulation.Config(500_000, 6_000_000, 8_000_000, storageLimits);
         _cts = new CancellationTokenSource(5_000);
         // _cts = new CancellationTokenSource(5000_000);
 
@@ -228,7 +228,7 @@ public class SimulateTests : IDisposable
     {
         // Arrange
         var target = Simulation.ToTarget(temperature);
-        Dictionary<string, int> storage = new()
+        Dictionary<string, int> storageLimits = new()
         {
             { target, 1 },
             { Target.Shelf, 1 },
@@ -240,7 +240,7 @@ public class SimulateTests : IDisposable
             new("2", "Banana", temperature, 20, 50),
         ];
         // Act
-        var actions = await SimulateToTheEnd(_defaultConfig with { storage = storage }, orders, _cts.Token);
+        var actions = await SimulateToTheEnd(_defaultConfig with { storageLimits = storageLimits }, orders, _cts.Token);
 
         // Assert
         Assert.Equal(Target.Shelf, actions.First(x => x.Id == "2").Target);
@@ -282,11 +282,11 @@ public class SimulateTests : IDisposable
     //     var testTarget = Target.Cooler;
     //     var oppositeTarget = Target.Heater;
 
-    //     Dictionary<string, int> storage = new() {
+    //     Dictionary<string, int> storageLimits = new() {
     //         { Target.Cooler, 1 },
     //         { Target.Shelf, 1 },
     //         { Target.Heater, 999 }};
-    //     Simulation.Config expireInFiveOrdersConfig = new(1_000_000, 5_000_000, 5_000_000, storage);
+    //     Simulation.Config expireInFiveOrdersConfig = new(1_000_000, 5_000_000, 5_000_000, storageLimits);
 
     //     Order orderToExpireBeforeShelfArrives = new("x1", "Banana", Temperature.Cold, 20, 50);
     //     List<Order> timeFillingOrders1 = Enumerable
