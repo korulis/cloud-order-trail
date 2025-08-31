@@ -378,7 +378,7 @@ public class SimulateTests : IDisposable
     {
         // Arrange
         Dictionary<string, int> storageLimits = new() { { Target.Shelf, 1 } };
-        Simulation.Config config = _defaultConfig with { storageLimits = storageLimits };
+        var config = _defaultConfig with { storageLimits = storageLimits };
 
         Order firstShelfOrder = new("s1", "Banana", Temperature.Room, 20, 60);
         Order secondShelfOrder = new("s2", "Banana", Temperature.Room, 20, 60);
@@ -397,8 +397,10 @@ public class SimulateTests : IDisposable
     }
 
 
-    [Fact()]
-    public async Task Discard_OrderFromShelf_WhenSecondNonShelfOrderArrives()
+    [Theory()]
+    [InlineData(Temperature.Cold)]
+    [InlineData(Temperature.Hot)]
+    public async Task Discard_OrderFromShelf_WhenSecondNonShelfOrderArrives(string nonShelfTemp)
     {
         // Arrange
         Dictionary<string, int> storageLimits = new() {
@@ -406,11 +408,11 @@ public class SimulateTests : IDisposable
             { Target.Cooler, 1 },
             { Target.Heater, 1 }
         };
-        Simulation.Config config = _defaultConfig with { storageLimits = storageLimits };
+        var config = _defaultConfig with { storageLimits = storageLimits };
 
         Order shelfOrder = new("s1", "Banana", Temperature.Room, 20, 60);
-        Order firstNonShelfOrder = new("x1", "Banana", Temperature.Cold, 20, 60);
-        Order secondNonShelfOrder = new("x2", "Banana", Temperature.Cold, 20, 60);
+        Order firstNonShelfOrder = new("x1", "Banana", nonShelfTemp, 20, 60);
+        Order secondNonShelfOrder = new("x2", "Banana", nonShelfTemp, 20, 60);
         List<Order> orders = [shelfOrder, firstNonShelfOrder, secondNonShelfOrder];
 
         // Act
@@ -423,6 +425,29 @@ public class SimulateTests : IDisposable
                 && x.ActionType == ActionType.Discard
                 && x.Target == Target.Shelf).Count() == 1,
             $"Expected single {ActionType.Discard} action for {Target.Shelf} Target. Actions: {ActionsForErrorMessage(actions)}");
+    }
+
+
+    [Theory()]
+    [InlineData(Temperature.Cold)]
+    [InlineData(Temperature.Hot)]
+    [InlineData(Temperature.Room)]
+    public async Task Discard_OrderFromTargetOnPickup_IfItIsExpired(string temp)
+    {
+        // Arrange
+        var config = _defaultConfig;
+        Order order = new("x1", "Banana", temp, 20, 4);
+
+        // Act
+        var actions = await SimulateToTheEnd(config, [order], _cts.Token);
+
+        // Assert
+        Assert.True(
+            actions.Where(x =>
+                x.ActionType == ActionType.Discard
+                && x.Target == Simulation.ToTarget(temp)
+                && x.Id == order.Id).Count() == 1,
+            $"Expected single {ActionType.Discard} action. Actions: {ActionsForErrorMessage(actions)}");
     }
 
     private static string ActionsForErrorMessage(List<Action> actions)

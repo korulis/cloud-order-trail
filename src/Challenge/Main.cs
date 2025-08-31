@@ -145,7 +145,7 @@ public class Simulation : IDisposable
 
     private static bool IsOrderProcessed(IEnumerable<Action> actions)
     {
-        return new[] { ActionType.Discard, ActionType.Pickup }.Contains(actions.Select(x => x.ActionType).Last());
+        return IsFinal(actions.Last());
     }
 
     private async Task PickupSingleOrder(PickableOrder order, CancellationToken ct)
@@ -171,19 +171,25 @@ public class Simulation : IDisposable
             {
                 return;
             }
-            if (IsFresh(order, orderActions))
+            if (IsFresh(order, orderActions, localNow))
             {
-                Action item = new(order.PickupTime, order.Id, ActionType.Pickup, orderActions.Last().Target);
-                Console.WriteLine($"Picking up order {item}");
-                orderActions.Add(item);
+                string pickupFromTarget = orderActions.Last().Target;
+                PickupOrderFromTarget(order, pickupFromTarget);
             }
             else
             {
-                // Action item = new(order.PickupTime, order.Id, ActionType.Discard, orderActions.Last().Target);
-                // orderActions.Add(item);
-                // Console.WriteLine($"Discarding order {item}");
+                string discardFromTarget = orderActions.Last().Target;
+                DiscardOrderFromTargetAt(order, discardFromTarget, order.PickupTime);
             }
         }
+    }
+
+
+    private static void PickupOrderFromTarget(PickableOrder order, string pickupFromTarget)
+    {
+        Action pickupAction = new(order.PickupTime, order.Id, ActionType.Pickup, pickupFromTarget);
+        _actionRepo[order.Id].Actions.Add(pickupAction);
+        Console.WriteLine($"Picking up order {pickupAction}");
     }
 
     private async IAsyncEnumerable<Task> PlaceOrders(Config config, List<Order> orders, [EnumeratorCancellation] CancellationToken ct)
@@ -290,7 +296,7 @@ public class Simulation : IDisposable
                 // check if can discard
                 // if can not discard ... assume moved or processed .. therefore do nothing.
                 string discardFromTarget = kvpToDiscard.Value.Actions.Last().Target;
-                DiscardOrderFromTarget(orderToDiscard, discardFromTarget);
+                DiscardOrderFromTargetAt(orderToDiscard, discardFromTarget, _time.GetLocalNow().DateTime);
             }
 
 
@@ -301,9 +307,9 @@ public class Simulation : IDisposable
         PlaceOrderOnTarget(localNow, target, pickableOrder);
     }
 
-    private void DiscardOrderFromTarget(PickableOrder orderToDiscard, string discardFromTarget)
+    private void DiscardOrderFromTargetAt(PickableOrder orderToDiscard, string discardFromTarget, DateTime discardAt)
     {
-        Action discardAction = new(_time.GetLocalNow().DateTime, orderToDiscard.Id, ActionType.Discard, discardFromTarget);
+        Action discardAction = new(discardAt, orderToDiscard.Id, ActionType.Discard, discardFromTarget);
         _actionRepo[orderToDiscard.Id].Actions.Add(discardAction);
         Console.WriteLine($"Discarding order: {discardAction}");
     }
@@ -382,10 +388,13 @@ public class Simulation : IDisposable
 
 
 
-    private static bool IsFresh(PickableOrder o, List<Action> a)
+    private static bool IsFresh(PickableOrder order, List<Action> actions, DateTime localNow)
     {
-        // temp implementation
-        return true;
+        var placementTime = actions.First().GetOriginalTimestamp();
+        var timeSpent = localNow - placementTime;
+        // Console.WriteLine($"Timespent: {timeSpent}");
+        var result = timeSpent <= TimeSpan.FromSeconds(order.Freshness);
+        return result;
     }
 
     public static string ToTarget(string temp)
