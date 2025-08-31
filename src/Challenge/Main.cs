@@ -27,7 +27,7 @@ class Challenge
                 { Target.Heater, 6 }
             };
             var orders = problem.Orders;
-            var simulation = new Simulation(TimeProvider.System);
+            using var simulation = new Simulation(TimeProvider.System);
             List<Action> actions = await simulation.Simulate(
                 new Simulation.Config(rate * 1000, min * 1000_000, max * 1000_000, storageLimits),
                 orders,
