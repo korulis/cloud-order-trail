@@ -68,20 +68,10 @@ public class Simulation : IDisposable
         await WaitUntil(order.PickupTime, _time.GetLocalNow().DateTime, ct);
 
         var localNow = _time.GetLocalNow().DateTime;
-        if (localNow != order.PickupTime)
-        {
-            // todo delete this
-            // for debug / dev purposes
-            // throw new Exception($"Current time does not coincide with designated order pickup time: {order.PickupTime:hh:mm:ss.fff} now: {localNow:hh:mm:ss.fff}");
-        }
 
         using (var semaphore = await GetOrCreateWaitingRepoSemaphore(order, ct))
         {
             var orderActions = _actionRepo[order.Id].Actions;
-            // it would actually be wrong to sort by time stamp from operational stand point 
-            // ..even if output is sorted by timestamp
-            // if need to sort should do that whennever action is added (always under semaphore)
-            // orderActions.Sort((x, y) => Convert.ToInt32(x.Timestamp - y.Timestamp));
             if (IsOrderProcessed(orderActions))
             {
                 return;
@@ -98,7 +88,6 @@ public class Simulation : IDisposable
             }
         }
     }
-
 
     private static void PickupOrderFromTargetAt(PickableOrder order, string pickupFromTarget, DateTime pickupTime)
     {
@@ -165,45 +154,31 @@ public class Simulation : IDisposable
         var target = Target.Shelf;
         if (IsFull(target, config.storageLimits, _actionRepo))
         {
-            // move / discard
             var kvpsWithOrdersOnTarget = KvpsWithOrdersOnTarget(_actionRepo, target);
-            if (!kvpsWithOrdersOnTarget.Any())
-            {
-                // handle error from race condition
-                throw new Exception("the list is migh be empty bcs of race condition");
-            }
             var entriesForOrdersToMove = EntriesForForeignOrdersOnTarget(kvpsWithOrdersOnTarget);
             PickableOrder? orderToMove = null;
 
             foreach (var entryForOrderToMove in entriesForOrdersToMove)
             {
-
-                // try move from shelf
                 var targetToMoveTo = ToTarget(entryForOrderToMove.Order.Temp);
                 if (!IsFull(targetToMoveTo, config.storageLimits, _actionRepo))
                 {
                     orderToMove = entryForOrderToMove.Order;
                     break;
                 }
-
             }
 
             if (orderToMove is not null)
             {
                 using var moveSemaphore = await GetOrCreateWaitingRepoSemaphore(orderToMove, ct);
-                // check if can move first
-                // if can not move handle error from race condition.
                 string moveToTarget = ToTarget(orderToMove.Temp);
                 MoveOrderToTargetAt(orderToMove, moveToTarget, localNow);
             }
             else
             {
                 var kvpToDiscard = CalculateOrderToDiscard(kvpsWithOrdersOnTarget);
-                // need to discard
                 var orderToDiscard = kvpToDiscard.Value.Order;
                 using var discardSemaphore = await GetOrCreateWaitingRepoSemaphore(orderToDiscard, ct);
-                // check if can discard
-                // if can not discard ... assume moved or processed .. therefore do nothing.
                 string discardFromTarget = kvpToDiscard.Value.Actions.Last().Target;
                 DiscardOrderFromTargetAt(orderToDiscard, discardFromTarget, localNow);
             }
@@ -211,8 +186,6 @@ public class Simulation : IDisposable
 
         }
 
-        // todo kb: should exit placement and reenter instead.
-        // place after move/discard
         PlaceOrderOnTarget(localNow, target, pickableOrder);
     }
 
@@ -274,7 +247,6 @@ public class Simulation : IDisposable
         Dictionary<string, (PickableOrder Order, List<Action> Actions)> _actionRepo)
     {
         var entriesWithOrdersOnTarget = KvpsWithOrdersOnTarget(_actionRepo, target).ToList();
-        // checking if == is actually sufficient
         return storageLimits[target] <= entriesWithOrdersOnTarget.Count;
     }
 
