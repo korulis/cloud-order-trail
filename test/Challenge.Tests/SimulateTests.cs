@@ -389,10 +389,41 @@ public class SimulateTests : IDisposable
 
         // Assert
         Assert.True(
-            actions.Where(x => x.Id == firstShelfOrder.Id && x.ActionType == ActionType.Discard).Count() == 1,
-            $"Actions {ActionsForErrorMessage(actions)}");
+            actions.Where(x =>
+                x.Id == firstShelfOrder.Id
+                && x.ActionType == ActionType.Discard
+                && x.Target == Target.Shelf).Count() == 1,
+            $"Expected single {ActionType.Discard} action for {firstShelfOrder.Id} order. Actions: {ActionsForErrorMessage(actions)}");
     }
 
+
+    [Fact()]
+    public async Task Discard_OrderFromShelf_WhenSecondNonShelfOrderArrives()
+    {
+        // Arrange
+        Dictionary<string, int> storageLimits = new() {
+            { Target.Shelf, 1 },
+            { Target.Cooler, 1 },
+            { Target.Heater, 1 }
+        };
+        Simulation.Config config = _defaultConfig with { storageLimits = storageLimits };
+
+        Order shelfOrder = new("s1", "Banana", Temperature.Room, 20, 60);
+        Order firstNonShelfOrder = new("x1", "Banana", Temperature.Cold, 20, 60);
+        Order secondNonShelfOrder = new("x2", "Banana", Temperature.Cold, 20, 60);
+        List<Order> orders = [shelfOrder, firstNonShelfOrder, secondNonShelfOrder];
+
+        // Act
+        var actions = await SimulateToTheEnd(config, orders, _cts.Token);
+
+        // Assert
+        Assert.True(
+            actions.Where(x =>
+                x.Id != firstNonShelfOrder.Id
+                && x.ActionType == ActionType.Discard
+                && x.Target == Target.Shelf).Count() == 1,
+            $"Expected single {ActionType.Discard} action for {Target.Shelf} Target. Actions: {ActionsForErrorMessage(actions)}");
+    }
 
     private static string ActionsForErrorMessage(List<Action> actions)
     {
