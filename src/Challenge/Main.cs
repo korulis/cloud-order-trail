@@ -180,7 +180,6 @@ public class Simulation : IDisposable
             else
             {
                 string discardFromTarget = orderActions.Last().Target;
-                // Console.WriteLine($"Order {order.Id} is not fresh at pickup time {order.PickupTime:hh:mm:ss.fffffff}, discarding");
                 DiscardOrderFromTargetAt(order, discardFromTarget, order.PickupTime);
             }
         }
@@ -191,8 +190,7 @@ public class Simulation : IDisposable
     {
         Action pickupAction = new(pickupTime, order.Id, ActionType.Pickup, pickupFromTarget);
         _actionRepo[order.Id].Actions.Add(pickupAction);
-        Console.WriteLine($"Picking up order {pickupAction}");
-        Console.WriteLine($"Order freshness cost: {Spoilage(order, _actionRepo[order.Id].Actions, pickupTime)}");
+        Console.WriteLine($"Picking up order: {pickupAction,100}");
     }
 
     private async IAsyncEnumerable<Task> PlaceOrders(Config config, List<Order> orders, [EnumeratorCancellation] CancellationToken ct)
@@ -200,10 +198,6 @@ public class Simulation : IDisposable
         foreach (var simpleOrder in orders)
         {
             var localNow = _time.GetLocalNow().DateTime;
-            if (simpleOrder.Id == "o2")
-            {
-                Console.WriteLine($"AAAAAAAAAAAa Starting pickup {new Action(localNow, simpleOrder.Id, ActionType.Pickup, simpleOrder.Temp)}");
-            }
             var target = ToTarget(simpleOrder.Temp);
 
             var pickupInMicroseconds = PickableOrder.RandomBetween(config.min, config.max);
@@ -212,7 +206,6 @@ public class Simulation : IDisposable
 
             using (var placeSemaphore = await GetOrCreateWaitingRepoSemaphore(pickableOrder, ct))
             {
-                // Console.WriteLine($"Starting pickup2 {new Action(localNow, order.Id, ActionType.Pickup, order.Temp)}");
                 _pickableOrders.Add(pickableOrder);
 
                 var actions = _actionRepo.Values.Select(x => x.Actions).SelectMany(x => x).ToList();
@@ -250,7 +243,7 @@ public class Simulation : IDisposable
         _actionRepo[pickableOrder.Id] = (pickableOrder, new() { });
         Action action = new(localNow, pickableOrder.Id, ActionType.Place, target);
         _actionRepo[pickableOrder.Id].Actions.Add(action);
-        Console.WriteLine($"Placing order: {action}");
+        Console.WriteLine($"Placing order: {action,100}");
     }
 
     private async Task TryPlaceOnShelf(Config config, DateTime localNow, PickableOrder pickableOrder, CancellationToken ct)
@@ -271,16 +264,15 @@ public class Simulation : IDisposable
             foreach (var entryForOrderToMove in entriesForOrdersToMove)
             {
 
-                //         // try move from shelf
+                // try move from shelf
                 var targetToMoveTo = ToTarget(entryForOrderToMove.Order.Temp);
-                // Console.WriteLine("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAa " + entryForOrderToMove.Order.Id);
                 if (!IsFull(targetToMoveTo, config.storageLimits, _actionRepo))
                 {
                     orderToMove = entryForOrderToMove.Order;
                     break;
                 }
 
-            } //end for
+            }
 
             if (orderToMove is not null)
             {
@@ -314,8 +306,7 @@ public class Simulation : IDisposable
     {
         Action discardAction = new(discardAt, orderToDiscard.Id, ActionType.Discard, discardFromTarget);
         _actionRepo[orderToDiscard.Id].Actions.Add(discardAction);
-        Console.WriteLine($"Discarding order: {discardAction}");
-        Console.WriteLine($"Order freshness cost: {Spoilage(orderToDiscard, _actionRepo[orderToDiscard.Id].Actions, discardAt)}");
+        Console.WriteLine($"Discarding order: {discardAction,100}");
     }
 
     private void MoveOrderToTargetAt(PickableOrder orderToMove, string target1, DateTime moveAt)
@@ -323,7 +314,7 @@ public class Simulation : IDisposable
         Action moveAction = new(moveAt, orderToMove.Id, ActionType.Move, target1);
         _actionRepo[orderToMove.Id].Actions.Add(
                           moveAction);
-        Console.WriteLine($"Moving order: {moveAction}");
+        Console.WriteLine($"Moving order: {moveAction,100}");
     }
 
 
@@ -392,11 +383,8 @@ public class Simulation : IDisposable
 
     private static bool IsFresh(PickableOrder order, List<Action> orderActions, DateTime localNow)
     {
-        TimeSpan Spoilage;
-        Spoilage = Simulation.Spoilage(order, orderActions, localNow);
-
-        // Console.WriteLine($"freshnessCost: {freshnessCost}");
-        var result = Spoilage <= TimeSpan.FromSeconds(order.Freshness);
+        var spoilage = Spoilage(order, orderActions, localNow);
+        var result = spoilage <= TimeSpan.FromSeconds(order.Freshness);
         return result;
     }
 
