@@ -27,7 +27,7 @@ public class SimulateTests : IDisposable
             { Target.Heater, 3 }};
         _defaultConfig = new Simulation.Config(500_000, 6_000_000, 8_000_000, storageLimits);
         _cts = new CancellationTokenSource(5_000);
-        _cts = new CancellationTokenSource(5000_000);
+        // _cts = new CancellationTokenSource(5000_000);
 
     }
 
@@ -450,12 +450,93 @@ public class SimulateTests : IDisposable
             $"Expected single {ActionType.Discard} action. Actions: {ActionsForErrorMessage(actions)}");
     }
 
+    [Theory()]
+    [InlineData(Temperature.Cold)]
+    [InlineData(Temperature.Hot)]
+    public async Task Discard_NonShelfOrderOnPickup_IfItExpiredAfterBeingPlacedOnShelf(string nonShelfTemp)
+    {
+        // Arrange
+        Dictionary<string, int> storageLimits = new() {
+            { Target.Shelf, 1 },
+            { Target.Cooler, 1 },
+            { Target.Heater, 1 }
+        };
+        Simulation.Config expireInFiveOrdersConfig = new(1_000_000, 4_800_000, 4_900_000, storageLimits);
+
+        Order firstNonShelfOrder = new("x1", "Banana", nonShelfTemp, 20, 6);
+        Order secondNonShelfOrder = new("x2", "Banana", nonShelfTemp, 20, 6);
+        List<Order> orders = [firstNonShelfOrder, secondNonShelfOrder];
+
+        // Act
+        var actions = await SimulateToTheEnd(expireInFiveOrdersConfig, orders, _cts.Token);
+
+        // Assert
+        var discardActions = actions.Where(x =>
+                x.Id == secondNonShelfOrder.Id
+                && x.ActionType == ActionType.Discard
+                && x.Target == Target.Shelf).ToList();
+        Assert.True(
+                discardActions.Count() == 1,
+                $"Expected single {ActionType.Discard} action for {Target.Shelf} Target. Actions: {ActionsForErrorMessage(actions)}");
+    }
+
+    [Theory()]
+    [InlineData(Temperature.Cold, Temperature.Hot, 7, ActionType.Discard)]
+    [InlineData(Temperature.Hot, Temperature.Cold, 7, ActionType.Discard)]
+    [InlineData(Temperature.Cold, Temperature.Hot, 10, ActionType.Pickup)]
+    [InlineData(Temperature.Hot, Temperature.Cold, 10, ActionType.Pickup)]
+    public async Task Finalize_NonShelfOrderOnPickup_DependingOnIfItExpiredAfterBeingMoved(
+        string nonShelfTemp,
+        string oppositeTemp,
+        long freshness,
+        string finalActionType)
+    {
+        // Arrange
+        Dictionary<string, int> storageLimits = new() {
+            { Target.Shelf, 1 },
+            { Simulation.ToTarget(nonShelfTemp), 1 },
+            { Simulation.ToTarget(oppositeTemp), 999 }
+        };
+        Simulation.Config expireInFiveOrdersConfig = new(1_000_000, 5_800_000, 5_900_000, storageLimits);
+
+        Order firstNonShelfOrder = new("x1", "Banana", nonShelfTemp, 20, 60);
+        List<Order> timeFillingOrders1 = Enumerable
+            .Range(1, 3)
+            .Select(x => new Order("o1." + x.ToString(), "Banana", oppositeTemp, 20, 60))
+            .ToList();
+        Order orderToBeMoved = new("x2", "Banana", nonShelfTemp, 20, freshness);
+        List<Order> timeFillingOrders2 = Enumerable
+            .Range(1, 2)
+            .Select(x => new Order("o2." + x.ToString(), "Banana", oppositeTemp, 20, 60))
+            .ToList();
+        Order orderTriggeringTheMove = new("x3", "Banana", Temperature.Room, 20, 60);
+
+
+        List<Order> orders = [firstNonShelfOrder, .. timeFillingOrders1, orderToBeMoved, .. timeFillingOrders2, orderTriggeringTheMove];
+
+        // Act
+        var actions = await SimulateToTheEnd(expireInFiveOrdersConfig, orders, _cts.Token);
+
+        // Assert
+        var placeActions = actions.Where(x =>
+                x.Id == orderToBeMoved.Id
+                && x.ActionType == ActionType.Place
+                && x.Target == Target.Shelf).ToList();
+        Assert.True(
+                placeActions.Count() == 1,
+                $"Expected single {ActionType.Place} action for {Target.Shelf} target, id {orderToBeMoved.Id}. Actions: {ActionsForErrorMessage(actions)}");
+        var finalAction = actions.Where(x => x.Id == orderToBeMoved.Id).Last();
+        Assert.True(
+                finalAction.ActionType == finalActionType,
+                $"Expected single {finalActionType} final action for id {orderToBeMoved.Id}. Actions: {ActionsForErrorMessage(actions)}");
+    }
+
     private static string ActionsForErrorMessage(List<Action> actions)
     {
         return "\n" + string.Join("\n", actions.Select(x => JsonSerializer.Serialize(new
         {
             Action = x,
-            Time = x.GetOriginalTimestamp().ToString("hh:mm:ss.fff")
+            Time = x.GetOriginalTimestamp().ToString("hh:mm:ss.fffffff")
         })));
     }
 
@@ -476,7 +557,7 @@ public class SimulateTests : IDisposable
             if ((currentTime - initialTime).TotalSeconds >= pauseAt)
             {
                 pauseAt++;
-                Console.WriteLine($"{pauseAt} virtual seconds elapsed in test.");
+                // Console.WriteLine($"{pauseAt} virtual seconds elapsed in test.");
             }
         }
         var actions = await actionsTask;

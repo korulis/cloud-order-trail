@@ -78,7 +78,7 @@ public record Action
 
     public override string ToString()
     {
-        return $"Action {new { Timestamp = _originalTimestamp.ToString("hh:mm:ss.fff"), OrderId = Id, ActionType, Target }}";
+        return $"Action {new { Timestamp = _originalTimestamp.ToString("hh:mm:ss.fffffff"), OrderId = Id, ActionType, Target }}";
     }
 
     public DateTime GetOriginalTimestamp()

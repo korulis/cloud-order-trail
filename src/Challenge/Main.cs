@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.Runtime.CompilerServices;
+using System.Security.Cryptography.X509Certificates;
 using System.Text.Json;
 
 namespace Challenge;
@@ -174,22 +175,24 @@ public class Simulation : IDisposable
             if (IsFresh(order, orderActions, localNow))
             {
                 string pickupFromTarget = orderActions.Last().Target;
-                PickupOrderFromTarget(order, pickupFromTarget);
+                PickupOrderFromTargetAt(order, pickupFromTarget, order.PickupTime);
             }
             else
             {
                 string discardFromTarget = orderActions.Last().Target;
+                // Console.WriteLine($"Order {order.Id} is not fresh at pickup time {order.PickupTime:hh:mm:ss.fffffff}, discarding");
                 DiscardOrderFromTargetAt(order, discardFromTarget, order.PickupTime);
             }
         }
     }
 
 
-    private static void PickupOrderFromTarget(PickableOrder order, string pickupFromTarget)
+    private static void PickupOrderFromTargetAt(PickableOrder order, string pickupFromTarget, DateTime pickupTime)
     {
-        Action pickupAction = new(order.PickupTime, order.Id, ActionType.Pickup, pickupFromTarget);
+        Action pickupAction = new(pickupTime, order.Id, ActionType.Pickup, pickupFromTarget);
         _actionRepo[order.Id].Actions.Add(pickupAction);
         Console.WriteLine($"Picking up order {pickupAction}");
+        Console.WriteLine($"Order freshness cost: {Spoilage(order, _actionRepo[order.Id].Actions, pickupTime)}");
     }
 
     private async IAsyncEnumerable<Task> PlaceOrders(Config config, List<Order> orders, [EnumeratorCancellation] CancellationToken ct)
@@ -285,7 +288,7 @@ public class Simulation : IDisposable
                 // check if can move first
                 // if can not move handle error from race condition.
                 string moveToTarget = ToTarget(orderToMove.Temp);
-                MoveOrderToTarget(orderToMove, moveToTarget);
+                MoveOrderToTargetAt(orderToMove, moveToTarget, localNow);
             }
             else
             {
@@ -296,7 +299,7 @@ public class Simulation : IDisposable
                 // check if can discard
                 // if can not discard ... assume moved or processed .. therefore do nothing.
                 string discardFromTarget = kvpToDiscard.Value.Actions.Last().Target;
-                DiscardOrderFromTargetAt(orderToDiscard, discardFromTarget, _time.GetLocalNow().DateTime);
+                DiscardOrderFromTargetAt(orderToDiscard, discardFromTarget, localNow);
             }
 
 
@@ -312,11 +315,12 @@ public class Simulation : IDisposable
         Action discardAction = new(discardAt, orderToDiscard.Id, ActionType.Discard, discardFromTarget);
         _actionRepo[orderToDiscard.Id].Actions.Add(discardAction);
         Console.WriteLine($"Discarding order: {discardAction}");
+        Console.WriteLine($"Order freshness cost: {Spoilage(orderToDiscard, _actionRepo[orderToDiscard.Id].Actions, discardAt)}");
     }
 
-    private void MoveOrderToTarget(PickableOrder orderToMove, string target1)
+    private void MoveOrderToTargetAt(PickableOrder orderToMove, string target1, DateTime moveAt)
     {
-        Action moveAction = new(_time.GetLocalNow().DateTime, orderToMove.Id, ActionType.Move, target1);
+        Action moveAction = new(moveAt, orderToMove.Id, ActionType.Move, target1);
         _actionRepo[orderToMove.Id].Actions.Add(
                           moveAction);
         Console.WriteLine($"Moving order: {moveAction}");
@@ -386,15 +390,45 @@ public class Simulation : IDisposable
         return lastOrderAction.ActionType == ActionType.Discard || lastOrderAction.ActionType == ActionType.Pickup;
     }
 
-
-
-    private static bool IsFresh(PickableOrder order, List<Action> actions, DateTime localNow)
+    private static bool IsFresh(PickableOrder order, List<Action> orderActions, DateTime localNow)
     {
-        var placementTime = actions.First().GetOriginalTimestamp();
-        var timeSpent = localNow - placementTime;
-        // Console.WriteLine($"Timespent: {timeSpent}");
-        var result = timeSpent <= TimeSpan.FromSeconds(order.Freshness);
+        TimeSpan Spoilage;
+        Spoilage = Simulation.Spoilage(order, orderActions, localNow);
+
+        // Console.WriteLine($"freshnessCost: {freshnessCost}");
+        var result = Spoilage <= TimeSpan.FromSeconds(order.Freshness);
         return result;
+    }
+
+    private static TimeSpan Spoilage(PickableOrder order, List<Action> orderActions, DateTime localNow)
+    {
+        TimeSpan spoilage;
+        var placementTime = orderActions.First().GetOriginalTimestamp();
+        if (!IsShelf(ToTarget(order.Temp)))
+        {
+            if (IsShelf(orderActions.First().Target))
+            {
+                if (orderActions.Count >= 2 && orderActions[1].ActionType == ActionType.Move)
+                {
+                    var moveTime = orderActions[1].GetOriginalTimestamp();
+                    spoilage = (localNow - moveTime) + (moveTime - placementTime) * 2;
+                }
+                else
+                {
+                    spoilage = (localNow - placementTime) * 2;
+                }
+            }
+            else
+            {
+                spoilage = localNow - placementTime;
+            }
+        }
+        else
+        {
+            spoilage = localNow - placementTime;
+        }
+
+        return spoilage;
     }
 
     public static string ToTarget(string temp)
