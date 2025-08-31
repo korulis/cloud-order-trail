@@ -153,18 +153,11 @@ public class Simulation : IDisposable
                             || actions.Select(x => x.ActionType).Contains(ActionType.Pickup);
     }
 
-    private async Task PickupSingleOrder(PickableOrder order, CancellationToken ct)
+    private async Task PickupSingleOrder(Simulation.Config config, PickableOrder order, CancellationToken ct)
     {
         DateTime localNow = _time.GetLocalNow().DateTime;
-        var delayAmount = order.PickupTime - localNow;
-        // for tests, because of discrete time flow
-        if (delayAmount < TimeSpan.Zero)
-        {
-            // for debug / dev purposes
-            // if (TimeSpan.FromMilliseconds(1) - delayAmount > TimeSpan.Zero) throw new Exception($"Process is late to initiate order pickup process by more than 1 millisecond. Pickup time: {order.PickupTime:hh:mm:ss.fff} now: {localNow:hh:mm:ss.fff}");
-            delayAmount = TimeSpan.Zero;
-        }
-        await Task.Delay(delayAmount, _time, ct);
+        await WaitFor(config.rate, localNow, ct);
+
         localNow = _time.GetLocalNow().DateTime;
         if (localNow != order.PickupTime)
         {
@@ -235,8 +228,8 @@ public class Simulation : IDisposable
                         Console.WriteLine($"Order placed: {order}");
                     }
                 }
-                
-                task = PickupSingleOrder(pickableOrder, ct);
+
+                task = PickupSingleOrder(config, pickableOrder, ct);
             }
 
             if (task == Task.CompletedTask)
@@ -244,12 +237,23 @@ public class Simulation : IDisposable
                 throw new Exception($"Task was not created properly {JsonSerializer.Serialize(pickableOrder)}");
             }
             yield return task;
-            // todo kb: use this
-            // Use this to make thread wake up times more consistent, because order placement operations might have taken some time.
-            // TimeSpan delay = targetTime - DateTime.Now;
-            await Task.Delay(TimeSpan.FromMicroseconds(config.rate), _time, ct);
 
+            await WaitFor(config.rate, localNow, ct);
         }
+    }
+
+    private async Task WaitFor(long step, DateTime baseLocalNow, CancellationToken ct)
+    {
+        var targetTime = baseLocalNow.AddMicroseconds(step);
+        // new local now might be significantly different
+        var newLocalNow = _time.GetLocalNow().DateTime;
+        TimeSpan delay = targetTime - newLocalNow;
+        if (delay < TimeSpan.Zero)
+        {
+            delay = TimeSpan.Zero;
+            Console.WriteLine($"WARNING: forced to override delay time. {(targetTime, newLocalNow)}");
+        }
+        await Task.Delay(delay, _time, ct);
     }
 
     private static bool IsShelf(string target)
