@@ -348,6 +348,7 @@ public class SimulateTests : IDisposable
         // make time increment steps slightly more granular than simulation steps or pickup interval.
         var minStep = Math.Min(config.rate, config.max - config.min) / 2;
         minStep = Math.Min(minStep, 100);
+        minStep = minStep == 0 ? 1 : minStep;
 
         var actionsTask = _sut.Simulate(config, orders, ct);
         var initialTime = _timeProvider.GetLocalNow().DateTime;
@@ -356,7 +357,7 @@ public class SimulateTests : IDisposable
         {
             _timeProvider.Advance(TimeSpan.FromMicroseconds(minStep));
             var currentTime = _timeProvider.GetLocalNow().DateTime;
-            if ((currentTime - initialTime).TotalSeconds > pauseAt)
+            if ((currentTime - initialTime).TotalSeconds >= pauseAt)
             {
                 pauseAt++;
                 Console.WriteLine($"{pauseAt} virtual seconds elapsed in test.");
