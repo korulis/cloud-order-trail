@@ -28,6 +28,7 @@ $ dotnet run -- --auth <token>
 ## Discard criteria
 
 - Choosing first order in the list of orders in Shelf. This should usually conicide with the earliest placed order among them - as such the oldest one.
+- In next iteration would select first 3 orders from the Shelf (so as not to depent on size of Shelf), then rank the orders there based on accumulated freshness penalty, plus expected freshness penalty to be accumulated based on order nature and time left till pickup and multiply that by price, thus incorporating order history, freshness and price into calculation.
 
 ## Notes
 
