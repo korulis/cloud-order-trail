@@ -143,18 +143,12 @@ public class Simulation : IDisposable
         return result;
     }
 
-    private int processedOrderCount() => _actionRepo
-                .Select(kvp => kvp.Value.Actions)
-                .Count(IsOrderProcessed);
-
     private static bool IsOrderProcessed(IEnumerable<Action> actions)
     {
-        // todo could be optimised if we can afford to assume actions are sorted by timestamp
-        return actions.Select(x => x.ActionType).Contains(ActionType.Discard)
-                            || actions.Select(x => x.ActionType).Contains(ActionType.Pickup);
+        return new[] { ActionType.Discard, ActionType.Pickup }.Contains(actions.Select(x => x.ActionType).Last());
     }
 
-    private async Task PickupSingleOrder(Simulation.Config config, PickableOrder order, CancellationToken ct)
+    private async Task PickupSingleOrder(PickableOrder order, CancellationToken ct)
     {
         await WaitUntil(order.PickupTime, _time.GetLocalNow().DateTime, ct);
 
@@ -169,7 +163,10 @@ public class Simulation : IDisposable
         using (var semaphore = await GetOrCreateWaitingRepoSemaphore(order, ct))
         {
             var orderActions = _actionRepo[order.Id].Actions;
-            orderActions.Sort((x, y) => Convert.ToInt32(x.Timestamp - y.Timestamp));
+            // it would actually be wrong to sort by time stamp from operational stand point 
+            // ..even if output is sorted by timestamp
+            // if need to sort should do that whennever action is added (always under semaphore)
+            // orderActions.Sort((x, y) => Convert.ToInt32(x.Timestamp - y.Timestamp));
             if (IsOrderProcessed(orderActions))
             {
                 return;
@@ -226,7 +223,7 @@ public class Simulation : IDisposable
                     }
                 }
 
-                task = PickupSingleOrder(config, pickableOrder, ct);
+                task = PickupSingleOrder(pickableOrder, ct);
             }
 
             if (task == Task.CompletedTask)
@@ -281,10 +278,8 @@ public class Simulation : IDisposable
                 using var moveSemaphore = await GetOrCreateWaitingRepoSemaphore(orderToMove, ct);
                 // check if can move first
                 // if can not move handle error from race condition.
-                Action moveAction = new(_time.GetLocalNow().DateTime, orderToMove.Id, ActionType.Move, ToTarget(orderToMove.Temp));
-                _actionRepo[orderToMove.Id].Actions.Add(
-                                  moveAction);
-                Console.WriteLine($"Moving order: {moveAction}");
+                string moveToTarget = ToTarget(orderToMove.Temp);
+                MoveOrderToTarget(orderToMove, moveToTarget);
             }
             else
             {
@@ -294,9 +289,8 @@ public class Simulation : IDisposable
                 using var discardSemaphore = await GetOrCreateWaitingRepoSemaphore(orderToDiscard, ct);
                 // check if can discard
                 // if can not discard ... assume moved or processed .. therefore do nothing.
-                // _actionRepo[orderToDiscard.Id].Actions.Add(
-                //     new Action(_time.GetLocalNow().DateTime, orderToDiscard.Id, ActionType.Discard, kvpToDiscard.Value.Actions.Last().Target));
-                // Console.WriteLine($"Placing order: {action}");
+                string discardFromTarget = kvpToDiscard.Value.Actions.Last().Target;
+                DiscardOrderFromTarget(orderToDiscard, discardFromTarget);
             }
 
 
@@ -307,10 +301,24 @@ public class Simulation : IDisposable
         PlaceOrderOnTarget(localNow, target, pickableOrder);
     }
 
+    private void DiscardOrderFromTarget(PickableOrder orderToDiscard, string discardFromTarget)
+    {
+        Action discardAction = new(_time.GetLocalNow().DateTime, orderToDiscard.Id, ActionType.Discard, discardFromTarget);
+        _actionRepo[orderToDiscard.Id].Actions.Add(discardAction);
+        Console.WriteLine($"Discarding order: {discardAction}");
+    }
+
+    private void MoveOrderToTarget(PickableOrder orderToMove, string target1)
+    {
+        Action moveAction = new(_time.GetLocalNow().DateTime, orderToMove.Id, ActionType.Move, target1);
+        _actionRepo[orderToMove.Id].Actions.Add(
+                          moveAction);
+        Console.WriteLine($"Moving order: {moveAction}");
+    }
 
 
     private KeyValuePair<string, (PickableOrder Order, List<Action> Actions)> CalculateOrderToDiscard(
-            List<KeyValuePair<string, (PickableOrder Order, List<Action> Actions)>> kvpsWithOrdersOnTarget)
+              List<KeyValuePair<string, (PickableOrder Order, List<Action> Actions)>> kvpsWithOrdersOnTarget)
     {
         // temp implementation
         return kvpsWithOrdersOnTarget.First();
@@ -361,7 +369,6 @@ public class Simulation : IDisposable
     {
         var result = _actionRepo.Where(kvp =>
         {
-            // kvp.Value.Actions.Sort((x, y) => Convert.ToInt32(x.Timestamp - y.Timestamp));
             var lastOrderAction = kvp.Value.Actions.Last();
             return lastOrderAction.Target == target && !IsFinal(lastOrderAction);
         }).ToList();

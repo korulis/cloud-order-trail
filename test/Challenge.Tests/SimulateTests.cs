@@ -373,6 +373,27 @@ public class SimulateTests : IDisposable
         && x.Target == Simulation.ToTarget(oppositeTemp)).Count() == 1, $"Actions {ActionsForErrorMessage(actions)}");
     }
 
+    [Fact()]
+    public async Task Discard_OrderFromShelf_WhenSecondShelfOrderArrives()
+    {
+        // Arrange
+        Dictionary<string, int> storageLimits = new() { { Target.Shelf, 1 } };
+        Simulation.Config config = _defaultConfig with { storageLimits = storageLimits };
+
+        Order firstShelfOrder = new("s1", "Banana", Temperature.Room, 20, 60);
+        Order secondShelfOrder = new("s2", "Banana", Temperature.Room, 20, 60);
+        List<Order> orders = [firstShelfOrder, secondShelfOrder];
+
+        // Act
+        var actions = await SimulateToTheEnd(config, orders, _cts.Token);
+
+        // Assert
+        Assert.True(
+            actions.Where(x => x.Id == firstShelfOrder.Id && x.ActionType == ActionType.Discard).Count() == 1,
+            $"Actions {ActionsForErrorMessage(actions)}");
+    }
+
+
     private static string ActionsForErrorMessage(List<Action> actions)
     {
         return "\n" + string.Join("\n", actions.Select(x => JsonSerializer.Serialize(new
