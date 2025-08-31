@@ -1,6 +1,6 @@
 using System.Collections.Concurrent;
 using System.Runtime.CompilerServices;
-using System.Text.Json;
+using System.Threading.Tasks;
 
 namespace Challenge;
 
@@ -126,9 +126,9 @@ public class Simulation : IDisposable
 
     public async Task<List<Action>> Simulate(Config config, List<Order> orders, CancellationToken ct)
     {
-        var placeOrderParallelism = 1;
-        var orderPlacementTasks = new int[placeOrderParallelism].Select(x => PlaceOrders(config, orders, ct)).ToArray();
-        var orderPickupTaskStream = orderPlacementTasks.Merge().WithCancellation(ct);
+        var orderPlacementTask = PlaceOrders(config, orders, ct);
+
+        var orderPickupTaskStream = PickupOrders(config, orders.Count, ct);
 
         var orderPickupTasks = new List<Task>();
         await foreach (var orderPickupTask in orderPickupTaskStream)
@@ -136,13 +136,13 @@ public class Simulation : IDisposable
             orderPickupTasks.Add(orderPickupTask);
         }
 
-        await Task.WhenAll(orderPickupTasks);
+        await Task.WhenAll([orderPlacementTask, .. orderPickupTasks]);
 
         var result = _actionRepo.Select(kvp => kvp.Value.Actions).SelectMany(x => x).OrderBy(x => x.Timestamp).ToList();
         return result;
     }
 
-    private int processedOrderCount() => _actionRepo
+    private int ProcessedOrderCount() => _actionRepo
                 .Select(kvp => kvp.Value.Actions)
                 .Count(IsOrderProcessed);
 
@@ -153,7 +153,7 @@ public class Simulation : IDisposable
                             || actions.Select(x => x.ActionType).Contains(ActionType.Pickup);
     }
 
-    private async Task PickupSingleOrder(Simulation.Config config, PickableOrder order, CancellationToken ct)
+    private async Task PickupSingleOrder(Config config, PickableOrder order, CancellationToken ct)
     {
         await WaitUntil(order.PickupTime, _time.GetLocalNow().DateTime, ct);
 
@@ -188,7 +188,26 @@ public class Simulation : IDisposable
         }
     }
 
-    private async IAsyncEnumerable<Task> PlaceOrders(Config config, List<Order> orders, [EnumeratorCancellation] CancellationToken ct)
+    private async IAsyncEnumerable<Task> PickupOrders(Config config, int orderCount, [EnumeratorCancellation] CancellationToken ct)
+    {
+        List<PickableOrder> registeredOrders = [];
+        while (ProcessedOrderCount() != orderCount)
+        {
+            // clone
+            var candidateOrders = _pickableOrders.Select(x => x).ToList();
+            foreach (var order in candidateOrders)
+            {
+                if (!registeredOrders.Contains(order))
+                {
+                    registeredOrders.Add(order);
+                    yield return PickupSingleOrder(config, order, ct);
+                }
+            }
+            await Task.Delay(1, ct);
+        }
+    }
+
+    private async Task PlaceOrders(Config config, List<Order> orders, CancellationToken ct)
     {
         foreach (var order in orders)
         {
@@ -197,7 +216,6 @@ public class Simulation : IDisposable
 
             var pickupInMicroseconds = PickableOrder.RandomBetween(config.min, config.max);
             PickableOrder pickableOrder = new(order, localNow.AddMicroseconds(pickupInMicroseconds));
-            Task task = Task.CompletedTask;
 
             using (var placeSemaphore = await GetOrCreateWaitingRepoSemaphore(pickableOrder, ct))
             {
@@ -228,14 +246,8 @@ public class Simulation : IDisposable
                     }
                 }
 
-                task = PickupSingleOrder(config, pickableOrder, ct);
             }
 
-            if (task == Task.CompletedTask)
-            {
-                throw new Exception($"Task was not created properly {JsonSerializer.Serialize(pickableOrder)}");
-            }
-            yield return task;
 
             await WaitUntil(localNow.AddMicroseconds(config.rate), localNow, ct);
         }
