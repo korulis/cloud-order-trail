@@ -271,7 +271,7 @@ public class SimulateTests : IDisposable
         Assert.Equal(Target.Shelf, actions.First(x => x.Id == "2").Target);
     }
 
-    [Fact(Skip = "for now")]
+    [Fact()]
     public async Task Puts_AllColdOrdersOnShelf_WhenCoolerIsFull()
     {
         // Arrange
@@ -280,7 +280,6 @@ public class SimulateTests : IDisposable
             new("1", "Banana", Temperature.Cold, 20, 50),
             new("2", "Banana", Temperature.Cold, 15, 40),
             new("3", "Banana", Temperature.Cold, 10, 30),
-
         ];
 
         List<Order> extraOrders = [
@@ -350,7 +349,7 @@ public class SimulateTests : IDisposable
     {
         // make time increment steps slightly more granular than simulation steps or pickup interval.
         var minStep = Math.Min(config.rate, config.max - config.min) / 2;
-        minStep = minStep == 0 ? 1 : minStep;
+        minStep = Math.Min(minStep, 100);
 
         var actionsTask = _sut.Simulate(config, orders, ct);
         while (actionsTask.IsCompleted == false)
