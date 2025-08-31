@@ -208,7 +208,38 @@ public class Simulation : IDisposable
     private KeyValuePair<string, (PickableOrder Order, List<Action> Actions)> CalculateOrderToDiscard(
               List<KeyValuePair<string, (PickableOrder Order, List<Action> Actions)>> kvpsWithOrdersOnTarget)
     {
-        return kvpsWithOrdersOnTarget.First();
+        // Console.WriteLine("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA " + string.Join(", ", kvpsWithOrdersOnTarget.Select(x => x.Value.Order.Id)));
+        var localNow = _time.GetLocalNow().DateTime;
+        var first3 = kvpsWithOrdersOnTarget.Take(3);
+        var notFresh = first3.Where(x => !IsFresh(x.Value.Order, x.Value.Actions, localNow));
+        // Console.WriteLine("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA " + string.Join(", ", notFresh.Select(x => x.Value.Order.Id)));
+        if (notFresh.Any())
+        {
+            return notFresh.First();
+        }
+        var first3WithSpoilage = first3
+            .Select(kvp =>
+            {
+                var spoilage = Spoilage(kvp.Value.Order, kvp.Value.Actions, localNow);
+                var overSpoilage = spoilage - TimeSpan.FromSeconds(kvp.Value.Order.Freshness);
+                var expectedFutureSpoilage = kvp.Value.Order.PickupTime - localNow;
+                // Console.WriteLine("VVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVV " + (kvp.Value.Order.Id, overSpoilage + expectedFutureSpoilage, overSpoilage, expectedFutureSpoilage));
+                if (kvp.Value.Actions.Last().Target != ToTarget(kvp.Value.Order.Temp))
+                {
+                    expectedFutureSpoilage = expectedFutureSpoilage * 2;
+                }
+
+
+                return (spoilage: overSpoilage + expectedFutureSpoilage, kvp);
+            }).ToList();
+        // Console.WriteLine("ZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZ " + string.Join(", ", first3WithSpoilage.Select(x => (x.kvp.Value.Order.Id, x.spoilage))));
+        var worstKvpWithSpoilage = first3WithSpoilage.Aggregate((x, y) =>
+        {
+            Console.WriteLine("WWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWW " + (x.kvp.Value.Order.Id, x.spoilage) + " vs " + (y.kvp.Value.Order.Id, y.spoilage) + " sds " + (x.spoilage > y.spoilage) + " " + (x.spoilage > y.spoilage ? x : y));
+            return x.spoilage > y.spoilage ? x : y;
+        });
+        // Console.WriteLine("XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX " + (worstKvpWithSpoilage.kvp.Value.Order.Id, worstKvpWithSpoilage.spoilage));
+        return worstKvpWithSpoilage.kvp;
     }
 
     private async Task WaitUntil(DateTime targetTime, DateTime baseLocalNow, CancellationToken ct)
