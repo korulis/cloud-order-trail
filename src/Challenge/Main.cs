@@ -155,10 +155,9 @@ public class Simulation : IDisposable
 
     private async Task PickupSingleOrder(Simulation.Config config, PickableOrder order, CancellationToken ct)
     {
-        DateTime localNow = _time.GetLocalNow().DateTime;
-        await WaitFor(config.rate, localNow, ct);
+        await WaitUntil(order.PickupTime, _time.GetLocalNow().DateTime, ct);
 
-        localNow = _time.GetLocalNow().DateTime;
+        var localNow = _time.GetLocalNow().DateTime;
         if (localNow != order.PickupTime)
         {
             // todo delete this
@@ -238,13 +237,12 @@ public class Simulation : IDisposable
             }
             yield return task;
 
-            await WaitFor(config.rate, localNow, ct);
+            await WaitUntil(localNow.AddMicroseconds(config.rate), localNow, ct);
         }
     }
 
-    private async Task WaitFor(long step, DateTime baseLocalNow, CancellationToken ct)
+    private async Task WaitUntil(DateTime targetTime, DateTime baseLocalNow, CancellationToken ct)
     {
-        var targetTime = baseLocalNow.AddMicroseconds(step);
         // new local now might be significantly different
         var newLocalNow = _time.GetLocalNow().DateTime;
         TimeSpan delay = targetTime - newLocalNow;
