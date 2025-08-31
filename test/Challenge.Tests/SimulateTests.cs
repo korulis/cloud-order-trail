@@ -26,8 +26,8 @@ public class SimulateTests : IDisposable
             { Target.Shelf, 3 },
             { Target.Heater, 3 }};
         _defaultConfig = new Simulation.Config(500_000, 6_000_000, 8_000_000, storage);
-        _cts = new CancellationTokenSource(5_000);
-        // _cts = new CancellationTokenSource(5000_000);
+        // _cts = new CancellationTokenSource(5_000);
+        _cts = new CancellationTokenSource(5000_000);
 
     }
 
@@ -228,7 +228,7 @@ public class SimulateTests : IDisposable
     {
         // Arrange
         var target = Simulation.ToTarget(temperature);
-        Dictionary<string, int> storage = new()
+        Dictionary<string, int> storageLimits = new()
         {
             { target, 1 },
             { Target.Shelf, 1 },
@@ -240,7 +240,7 @@ public class SimulateTests : IDisposable
             new("2", "Banana", temperature, 20, 50),
         ];
         // Act
-        var actions = await SimulateToTheEnd(_defaultConfig with { storage = storage }, orders, _cts.Token);
+        var actions = await SimulateToTheEnd(_defaultConfig with { storageLimits = storageLimits }, orders, _cts.Token);
 
         // Assert
         Assert.Equal(Target.Shelf, actions.First(x => x.Id == "2").Target);
@@ -270,7 +270,8 @@ public class SimulateTests : IDisposable
         var actions = await SimulateToTheEnd(config, orders, _cts.Token);
 
         // Assert
-        Assert.Equal(Target.Shelf, actions.First(x => x.Id == "4").Target);
+        Assert.True(Target.Shelf == actions.First(x => x.Id == "4").Target,
+        $"Actions: {ActionsForErrorMessage(actions)}");
         Assert.Equal(Target.Shelf, actions.First(x => x.Id == "5").Target);
         Assert.Equal(Target.Shelf, actions.First(x => x.Id == "6").Target);
     }
@@ -307,10 +308,18 @@ public class SimulateTests : IDisposable
 
         // Assert
         var moveActions = actions.Where(x => x.Id == "x2" && x.ActionType == ActionType.Move).ToList();
-        Assert.True(moveActions.Count == 1, $"Expected single {ActionType.Move} action for {"x2"} order, but found {moveActions.Count}");
+        Assert.True(moveActions.Count == 1, $"Expected single {ActionType.Move} action for {"x2"} order, but found {moveActions.Count}, Actions: {ActionsForErrorMessage(actions)}");
         Assert.Equal(Target.Cooler, moveActions.Single().Target);
     }
 
+    private static string ActionsForErrorMessage(List<Action> actions)
+    {
+        return "\n" + string.Join("\n", actions.Select(x => JsonSerializer.Serialize(new
+        {
+            Action = x,
+            Time = x.GetOriginalTimestamp().ToString("hh:mm:ss.fff")
+        })));
+    }
 
     private async Task<List<Action>> SimulateToTheEnd(Simulation.Config config, List<Order> orders, CancellationToken ct)
     {
@@ -321,6 +330,7 @@ public class SimulateTests : IDisposable
         var actionsTask = _sut.Simulate(config, orders, ct);
         while (actionsTask.IsCompleted == false)
         {
+            var localNow = _timeProvider.GetLocalNow().DateTime;
             _timeProvider.Advance(TimeSpan.FromMicroseconds(minStep));
         }
         var actions = await actionsTask;

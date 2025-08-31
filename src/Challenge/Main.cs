@@ -110,8 +110,8 @@ public class Simulation : IDisposable
     /// <param name="rate">rate of order arrival in microseconds</param>
     /// <param name="min">minimum amount of microseconds before order is picked</param>
     /// <param name="max">maximum amount of microseconds before order is picked</param>
-    /// <param name="storage"> storage limits for different kinds of storage</param>
-    public record Config(long rate, long min, long max, Dictionary<string, int> storage);
+    /// <param name="storageLimits"> storage limits for different kinds of storage</param>
+    public record Config(long rate, long min, long max, Dictionary<string, int> storageLimits);
 
     private readonly TimeProvider _time;
 
@@ -208,34 +208,52 @@ public class Simulation : IDisposable
                 _pickableOrders.Add(pickableOrder);
                 task = PickupSingleOrder(pickableOrder, ct);
 
-                var allActions = _actionRepo.Values.Select(x => x.Actions).SelectMany(x => x).ToList();
                 if (IsShelf(target))
                 {
-
                     // place 1
-                    if (IsFull(target, config.storage, allActions))
+                    // try place to shelf
+                    if (IsFull_Flawed(target, config.storageLimits, _actionRepo))
                     {
-                        List<Action> actionsForOrdersOutOfTarget = ActionsForOrdersOutOfTarget(allActions);
-                        if (actionsForOrdersOutOfTarget.Any())
+                        var entriesForOrdersToMove = EntriesForOrdersOnForeignTarget_Flawed(_actionRepo);
+                        if (entriesForOrdersToMove.Any())
                         {
-                            // need to move
-
-                            // get order to move from pickableOrders list or order storage without lock
-                            var orderToMoveAction = actionsForOrdersOutOfTarget.First();
-                            var orderToMove = _pickableOrders.Single(x => x.Id == orderToMoveAction.Id);
-                            // ... lock action repo with order
-                            // ... lock storage state, get order
-                            // reaquire actions from repo via order (for race condition reasons)
-                            // if action the same - ok , else assume failed, bcs sbd moved it , release lock and goto "place 1"
-
-                            using (var moveSemaphore = await GetOrCreateWaitingRepoSemaphore(orderToMove))
+                            var movedAnOrder = false;
+                            foreach (var entryForOrdersToMove in entriesForOrdersToMove)
                             {
 
+                                // try move from shelf
+
+                                // get order to move from pickableOrders list or order storage without lock
+                                // ... lock action repo with order
+                                // ... lock storage state, get order
+                                // reaquire actions from repo via order (for race condition reasons)
+                                // if action the same - ok , else assume failed, bcs sbd moved it , release lock and goto "place 1"
+
+
+                                // is orderToMove still in shelf?
+                                // if yes then got to place 1 , but release semaphore.
+                                var orderToMove = entryForOrdersToMove.Order;
+                                var targetToMoveTo = ToTarget(orderToMove.Temp);
+                                if (IsFull_Flawed(targetToMoveTo, config.storageLimits, _actionRepo))
+                                {
+                                    continue;
+                                }
+                                else
+                                {
+                                    _actionRepo[orderToMove.Id].Actions.Add(new Action(_time.GetLocalNow().DateTime, orderToMove.Id, ActionType.Move, targetToMoveTo));
+                                    // using (var moveSemaphore = await GetOrCreateWaitingRepoSemaphore(orderToMove))
+                                    // {
+                                    //     _actionRepo[orderToMove.Id].Actions.Add(new Action(_time.GetLocalNow().DateTime, orderToMove.Id, ActionType.Move, targetToMoveTo));
+                                    // }
+                                    movedAnOrder = true;
+                                    break;
+                                }
 
                             }
-
-
-
+                            if (!movedAnOrder)
+                            {
+                                // need to discard
+                            }
 
                         }
                         else
@@ -252,7 +270,12 @@ public class Simulation : IDisposable
                 }
                 else
                 {
-                    if (IsFull(target, config.storage, allActions))
+                    if (pickableOrder.Id == "x2")
+                    {
+                        Console.WriteLine("we are here");
+                    }
+
+                    if (IsFull_Flawed(target, config.storageLimits, _actionRepo))
                     {
                         // todo kb: need to try put in shelf
                         // temp implementation:
@@ -284,15 +307,41 @@ public class Simulation : IDisposable
         }
     }
 
-    private List<Action> ActionsForOrdersOutOfTarget(List<Action> actions)
+    private List<(PickableOrder Order, List<Action> Actions)> EntriesForOrdersOnForeignTarget_Flawed(
+        Dictionary<string, (PickableOrder Order, List<Action> Actions)> _actionRepo)
     {
-        throw new NotImplementedException();
+        var result = EntriesWithOrdersOnTarget_Flawed(_actionRepo, Target.Shelf)
+        .Where(kvp => kvp.Value.Actions.Last().Target != ToTarget(kvp.Value.Order.Temp))
+        .Select(kvp => kvp.Value)
+        .ToList();
+        return result;
     }
 
-    private static bool IsFull(string target, Dictionary<string, int> storage, List<Action> allActions)
+    private static bool IsFull_Flawed(
+        string target,
+        Dictionary<string, int> storageLimits,
+        Dictionary<string, (PickableOrder Order, List<Action> Actions)> _actionRepo)
     {
+        var entriesWithOrdersOnTarget = EntriesWithOrdersOnTarget_Flawed(_actionRepo, target).ToList();
         // checking if == is actually sufficient
-        return storage[target] <= allActions.Count(x => x.Target == target && x.ActionType == ActionType.Place);
+        return storageLimits[target] <= entriesWithOrdersOnTarget.Count;
+    }
+
+    private static IEnumerable<KeyValuePair<string, (PickableOrder Order, List<Action> Actions)>> EntriesWithOrdersOnTarget_Flawed(
+        Dictionary<string, (PickableOrder Order, List<Action> Actions)> _actionRepo,
+        string target)
+    {
+        return _actionRepo.Where(kvp =>
+        {
+            kvp.Value.Actions.Sort((x, y) => Convert.ToInt32(x.Timestamp - y.Timestamp));
+            var lastOrderAction = kvp.Value.Actions.Last();
+            return lastOrderAction.Target == target && !IsFinal(lastOrderAction);
+        });
+    }
+
+    private static bool IsFinal(Action lastOrderAction)
+    {
+        return lastOrderAction.ActionType == ActionType.Discard || lastOrderAction.ActionType == ActionType.Pickup;
     }
 
     private static bool IsShelf(string target)
