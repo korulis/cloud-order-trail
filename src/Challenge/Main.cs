@@ -324,8 +324,8 @@ public class Simulation : IDisposable
     }
 }
 
-// need this to be a reference type, so I can use it in code locking logic - key for dict of sempahores for actionsRepo
-public class PickableOrder
+// need this to be record, so it can be created on different threads and still be recognised as the same entity while being use as a key in dictionary
+public record PickableOrder
 {
     public DateTime PickupTime { get; init; }
     public string Id { get; init; }
