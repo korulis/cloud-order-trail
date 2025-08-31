@@ -210,10 +210,15 @@ public class Simulation : IDisposable
             using (var placeSemaphore = await GetOrCreateWaitingRepoSemaphore(pickableOrder))
             {
                 _pickableOrders.Add(pickableOrder);
-                task = PickupSingleOrder(pickableOrder, ct);
 
                 var actions = _actionRepo.Values.Select(x => x.Actions).SelectMany(x => x).ToList();
-                if (IsNonShelf(target))
+                if (IsShelf(target))
+                {
+                    _actionRepo[order.Id] = (pickableOrder, new() { });
+                    _actionRepo[order.Id].Actions.Add(new(localNow, order.Id, ActionType.Place, target));
+                    Console.WriteLine($"Order placed: {order}");
+                }
+                else
                 {
                     if (IsFull(target, config.storageLimits, actions))
                     {
@@ -230,12 +235,8 @@ public class Simulation : IDisposable
                         Console.WriteLine($"Order placed: {order}");
                     }
                 }
-                else
-                {
-                    _actionRepo[order.Id] = (pickableOrder, new() { });
-                    _actionRepo[order.Id].Actions.Add(new(localNow, order.Id, ActionType.Place, target));
-                    Console.WriteLine($"Order placed: {order}");
-                }
+                
+                task = PickupSingleOrder(pickableOrder, ct);
             }
 
             if (task == Task.CompletedTask)
@@ -251,16 +252,46 @@ public class Simulation : IDisposable
         }
     }
 
+    private static bool IsShelf(string target)
+    {
+        return target == Target.Shelf;
+    }
+
     private static bool IsFull(string target, Dictionary<string, int> storageLimits, List<Action> actions)
     {
         // checking if == is actually sufficient
         return storageLimits[target] <= actions.Count(x => x.Target == target && x.ActionType == ActionType.Place);
     }
 
-    private static bool IsNonShelf(string target)
+    private static bool IsFull_Flawed(
+        string target,
+        Dictionary<string, int> storageLimits,
+        Dictionary<string, (PickableOrder Order, List<Action> Actions)> _actionRepo)
     {
-        return (new[] { Target.Cooler, Target.Heater }).Contains(target);
+        var entriesWithOrdersOnTarget = EntriesWithOrdersOnTarget_Flawed(_actionRepo, target).ToList();
+        // checking if == is actually sufficient
+        return storageLimits[target] <= entriesWithOrdersOnTarget.Count;
     }
+
+    private static IEnumerable<KeyValuePair<string, (PickableOrder Order, List<Action> Actions)>> EntriesWithOrdersOnTarget_Flawed(
+    Dictionary<string, (PickableOrder Order, List<Action> Actions)> _actionRepo,
+    string target)
+    {
+        var result = _actionRepo.Where(kvp =>
+        {
+            // kvp.Value.Actions.Sort((x, y) => Convert.ToInt32(x.Timestamp - y.Timestamp));
+            var lastOrderAction = kvp.Value.Actions.Last();
+            return lastOrderAction.Target == target && !IsFinal(lastOrderAction);
+        }).ToList();
+        return result;
+    }
+
+    private static bool IsFinal(Action lastOrderAction)
+    {
+        return lastOrderAction.ActionType == ActionType.Discard || lastOrderAction.ActionType == ActionType.Pickup;
+    }
+
+
 
     private static bool IsFresh(PickableOrder o, List<Action> a)
     {
