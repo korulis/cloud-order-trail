@@ -208,7 +208,6 @@ public class Simulation : IDisposable
     private KeyValuePair<string, (PickableOrder Order, List<Action> Actions)> CalculateOrderToDiscard(
               List<KeyValuePair<string, (PickableOrder Order, List<Action> Actions)>> kvpsWithOrdersOnTarget)
     {
-        // temp implementation
         return kvpsWithOrdersOnTarget.First();
     }
 
