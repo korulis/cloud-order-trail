@@ -270,7 +270,8 @@ public class SimulateTests : IDisposable
         var actions = await SimulateToTheEnd(config, orders, _cts.Token);
 
         // Assert
-        Assert.Equal(Target.Shelf, actions.First(x => x.Id == "4").Target);
+        Assert.True(Target.Shelf == actions.First(x => x.Id == "4").Target,
+        $"Actions: {ActionsForErrorMessage(actions)}");
         Assert.Equal(Target.Shelf, actions.First(x => x.Id == "5").Target);
         Assert.Equal(Target.Shelf, actions.First(x => x.Id == "6").Target);
     }
@@ -311,6 +312,14 @@ public class SimulateTests : IDisposable
     //     Assert.Equal(Target.Cooler, moveActions.Single().Target);
     // }
 
+    private static string ActionsForErrorMessage(List<Action> actions)
+    {
+        return "\n" + string.Join("\n", actions.Select(x => JsonSerializer.Serialize(new
+        {
+            Action = x,
+            Time = x.GetOriginalTimestamp().ToString("hh:mm:ss.fff")
+        })));
+    }
 
     private async Task<List<Action>> SimulateToTheEnd(Simulation.Config config, List<Order> orders, CancellationToken ct)
     {
