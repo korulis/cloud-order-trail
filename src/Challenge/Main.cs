@@ -65,13 +65,13 @@ public class RepoSemaphore : IDisposable
         _slim = new SemaphoreSlim(1, 1);
     }
 
-    public Task WaitAsync()
+    public Task WaitAsync(CancellationToken ct)
     {
         if (_isDisposed)
         {
             throw new ObjectDisposedException(nameof(RepoSemaphore), "Cannot perform work on a disposed object.");
         }
-        return _slim.WaitAsync();
+        return _slim.WaitAsync(ct);
     }
     public void Dispose()
     {
@@ -96,10 +96,10 @@ public class Simulation : IDisposable
 
     private readonly ConcurrentDictionary<PickableOrder, RepoSemaphore> _repoSemaphores = new();
 
-    private async Task<RepoSemaphore> GetOrCreateWaitingRepoSemaphore(PickableOrder order)
+    private async Task<RepoSemaphore> GetOrCreateWaitingRepoSemaphore(PickableOrder order, CancellationToken ct)
     {
         var semaphore = _repoSemaphores.GetOrAdd(order, new RepoSemaphore());
-        await semaphore.WaitAsync();
+        await semaphore.WaitAsync(ct);
         return semaphore;
     }
 
@@ -166,7 +166,7 @@ public class Simulation : IDisposable
             // throw new Exception($"Current time does not coincide with designated order pickup time: {order.PickupTime:hh:mm:ss.fff} now: {localNow:hh:mm:ss.fff}");
         }
 
-        using (var semaphore = await GetOrCreateWaitingRepoSemaphore(order))
+        using (var semaphore = await GetOrCreateWaitingRepoSemaphore(order, ct))
         {
             var orderActions = _actionRepo[order.Id].Actions;
             orderActions.Sort((x, y) => Convert.ToInt32(x.Timestamp - y.Timestamp));
@@ -200,7 +200,7 @@ public class Simulation : IDisposable
             PickableOrder pickableOrder = new(order, localNow.AddMicroseconds(pickupInMicroseconds));
             Task task = Task.CompletedTask;
 
-            using (var placeSemaphore = await GetOrCreateWaitingRepoSemaphore(pickableOrder))
+            using (var placeSemaphore = await GetOrCreateWaitingRepoSemaphore(pickableOrder, ct))
             {
                 _pickableOrders.Add(pickableOrder);
 
