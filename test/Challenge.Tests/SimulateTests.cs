@@ -192,6 +192,31 @@ public class SimulateTests : IDisposable
     }
 
     [Fact()]
+    public async Task Puts_SeveralOrdersOnTime()
+    {
+        // Arrange
+        List<Order> orders =
+        [
+            new("1", "Banana", Temperature.Cold, 20, 50),
+            new("2", "Banana", Temperature.Cold, 20, 50),
+            new("3", "Banana", Temperature.Cold, 20, 50),
+        ];
+        // Act
+        var actions = await SimulateToTheEnd(_defaultConfig, orders, _cts.Token);
+
+        // Assert
+        Assert.True(
+            actions.Take(3).All(x => x.ActionType == ActionType.Place),
+            $"First 3 actions are not all placement: {ActionsForErrorMessage(actions)}");
+        Assert.True(
+            actions[1].GetOriginalTimestamp() - actions[0].GetOriginalTimestamp() < TimeSpan.FromMicroseconds(_defaultConfig.rate * 2),
+            $"Took too long to place the second order: {ActionsForErrorMessage(actions)}");
+        Assert.True(
+            actions[2].GetOriginalTimestamp() - actions[1].GetOriginalTimestamp() < TimeSpan.FromMicroseconds(_defaultConfig.rate * 2),
+            $"Took too long to place the third order: {ActionsForErrorMessage(actions)}");
+    }
+
+    [Fact()]
     public async Task Puts_SeveralOrdersIntoCorrespondingTargets()
     {
         // Arrange
