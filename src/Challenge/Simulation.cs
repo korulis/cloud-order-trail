@@ -6,8 +6,8 @@ namespace Challenge;
 
 public class Simulation : IDisposable
 {
-    private static readonly List<PickableOrder> _pickableOrders = [];
-    private static readonly Dictionary<string, (PickableOrder Order, List<Action> Actions)> _actionRepo = new() { };
+    private readonly List<PickableOrder> _pickableOrders = [];
+    private readonly Dictionary<string, (PickableOrder Order, List<Action> Actions)> _actionRepo = new() { };
 
     private readonly ConcurrentDictionary<PickableOrder, RepoSemaphore> _repoSemaphores = new();
 
@@ -89,7 +89,7 @@ public class Simulation : IDisposable
         }
     }
 
-    private static void PickupOrderFromTargetAt(PickableOrder order, string pickupFromTarget, DateTime pickupTime)
+    private void PickupOrderFromTargetAt(PickableOrder order, string pickupFromTarget, DateTime pickupTime)
     {
         Action pickupAction = new(pickupTime, order.Id, ActionType.Pickup, pickupFromTarget);
         _actionRepo[order.Id].Actions.Add(pickupAction);
@@ -141,7 +141,7 @@ public class Simulation : IDisposable
         }
     }
 
-    private static void PlaceOrderOnTarget(DateTime localNow, string target, PickableOrder pickableOrder)
+    private void PlaceOrderOnTarget(DateTime localNow, string target, PickableOrder pickableOrder)
     {
         _actionRepo[pickableOrder.Id] = (pickableOrder, new() { });
         Action action = new(localNow, pickableOrder.Id, ActionType.Place, target);
