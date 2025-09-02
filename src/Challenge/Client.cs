@@ -44,6 +44,7 @@ public static class Target
     public const string Heater = "heater";
     public const string Cooler = "cooler";
     public const string Shelf = "shelf";
+    public const string FromWherever = "from_wherever";
 }
 
 

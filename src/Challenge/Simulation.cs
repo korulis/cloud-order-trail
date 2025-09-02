@@ -1,24 +1,33 @@
 using System.Collections.Concurrent;
-using System.CommandLine.Parsing;
+using System.Linq.Expressions;
 using System.Runtime.CompilerServices;
 using System.Text.Json;
 
 namespace Challenge;
 
 using RepoEntry = (Order Order, List<Action> Actions);
-using ActionMarker = (string Id, string ActionType, string Target);
+using Command = (Order Order, string ActionType, string Target);
 
 public class Simulation : IDisposable
 {
     private readonly List<Order> _pickableOrders = [];
-    private readonly Dictionary<string, RepoEntry> _actionRepo = new() { };
-    private readonly ConcurrentDictionary<Order, RepoSemaphore> _repoSemaphores = new();
-    private readonly ConcurrentDictionary<ActionMarker, Task> _actionTaskRepo = new();
+    private readonly Dictionary<string, RepoEntry> _orderRepo = new() { };
+    private readonly ConcurrentDictionary<Order, RepoSemaphore> _orderRepoSemaphores = new();
+    private readonly ConcurrentDictionary<Command, Task> _commandHandlerRepo = new();
+    // private readonly Dictionary<string, List<Order>> _storageRepo = new() { };
+    // private readonly ConcurrentDictionary<string, RepoSemaphore> _storageRepoSemaphores = new();
 
 
-    private async Task<RepoSemaphore> GetOrCreateWaitingRepoSemaphore(Order order, CancellationToken ct)
+    // private async Task<RepoSemaphore> GetOrCreateWaitingStorageRepoSemaphore(string target, CancellationToken ct)
+    // {
+    //     var semaphore = _storageRepoSemaphores.GetOrAdd(target, new RepoSemaphore());
+    //     await semaphore.WaitAsync(ct);
+    //     return semaphore;
+    // }
+
+    private async Task<RepoSemaphore> GetOrCreateWaitingOrderRepoSemaphore(Order order, CancellationToken ct)
     {
-        var semaphore = _repoSemaphores.GetOrAdd(order, new RepoSemaphore());
+        var semaphore = _orderRepoSemaphores.GetOrAdd(order, new RepoSemaphore());
         await semaphore.WaitAsync(ct);
         return semaphore;
     }
@@ -52,38 +61,29 @@ public class Simulation : IDisposable
         }
     }
 
-    public async Task PlaceSingleOrderAt(Config config, Order order, DateTime placementTime, CancellationToken ct)
+    public async Task TryPlaceOrderAt(Config config, Order order, DateTime placementTime, string target, CancellationToken ct)
     {
-        var pickupTime = GetPickupTime(config, placementTime);
         await WaitUntil(placementTime, ct);
 
         // have consisten local now after waiting
         var localNow = _time.GetLocalNow().DateTime;
-        using (var placeSemaphore = await GetOrCreateWaitingRepoSemaphore(order, ct))
-        {
-            var target = ToTarget(order.Temp);
-            _pickableOrders.Add(order);
 
-            // var actions = _actionRepo.Values.Select(x => x.Actions).SelectMany(x => x).ToList();
-            if (IsShelf(target))
+        if (IsShelf(target))
+        {
+            await TryPlaceOnShelf(config, localNow, order, ct);
+        }
+        else
+        {
+            if (IsFull(target, config.storageLimits, _orderRepo))
             {
                 await TryPlaceOnShelf(config, localNow, order, ct);
             }
             else
             {
-                if (IsFull(target, config.storageLimits, _actionRepo))
-                {
-                    await TryPlaceOnShelf(config, localNow, order, ct);
-                }
-                else
-                {
-                    PlaceOrderOnTarget(localNow, target, order);
-                }
+                await PlaceOrderOnTarget(localNow, target, order, config, ct);
             }
-
-            // PickupSingleOrder2(pickableOrder, ct);
-
         }
+
     }
 
     private static DateTime GetPickupTime(Config config, DateTime placementTime)
@@ -103,37 +103,27 @@ public class Simulation : IDisposable
 
         orders.Select((Order x, int i) =>
         {
-            var placementTask = PlaceSingleOrderAt(config, x, localNow + TimeSpan.FromMicroseconds(i * config.rate), ct);
-            var key = (x.Id, ActionType: ActionType.Place, Target: ToTarget(x.Temp));
-            _actionTaskRepo.TryAdd(key, placementTask);
+            var placementTask = TryPlaceOrderAt(
+                config,
+                x,
+                localNow + TimeSpan.FromMicroseconds(i * config.rate),
+                ToTarget(x.Temp),
+                ct);
+            var key = (x, ActionType: ActionType.Place, Target: ToTarget(x.Temp));
+            _commandHandlerRepo.TryAdd(key, placementTask);
             return i;
         }).ToList();
 
         // the condition here could be also be checking list of completed orders.
-        while (_actionTaskRepo.Values.Any(x => !x.IsCompleted))
+        while (_commandHandlerRepo.Values.Any(x => !x.IsCompleted))
         {
-            IEnumerable<Task> values = _actionTaskRepo.Values.Where(x => !x.IsCompleted);
+            IEnumerable<Task> values = _commandHandlerRepo.Values.Where(x => !x.IsCompleted);
             Task completedTask = await Task.WhenAny(values);
             // rethrow exceptions if any
             await completedTask;
         }
 
-
-
-        // // can up this number once PlaceOrders is made reentrant.
-        // var placeOrderParallelism = 1;
-        // var orderPlacementTasks = new int[placeOrderParallelism].Select(x => PlaceOrders(config, orders, ct)).ToArray();
-        // var orderPickupTaskStream = orderPlacementTasks.Merge().WithCancellation(ct);
-
-        // var orderPickupTasks = new List<Task>();
-        // await foreach (var orderPickupTask in orderPickupTaskStream)
-        // {
-        //     orderPickupTasks.Add(orderPickupTask);
-        // }
-
-        // await Task.WhenAll(orderPickupTasks);
-
-        var result = _actionRepo.Select(kvp => kvp.Value.Actions).SelectMany(x => x).OrderBy(x => x.Timestamp).ToList();
+        var result = _orderRepo.Select(kvp => kvp.Value.Actions).SelectMany(x => x).OrderBy(x => x.Timestamp).ToList();
         return result;
     }
 
@@ -142,15 +132,15 @@ public class Simulation : IDisposable
         return IsFinal(actions.Last());
     }
 
-    private async Task PickupSingleOrder(Order orderToPickup, DateTime pickupTime, CancellationToken ct)
+    private async Task TryPickupSingleOrder(Order orderToPickup, DateTime pickupTime, CancellationToken ct)
     {
         await WaitUntil(pickupTime, ct);
 
         var localNow = _time.GetLocalNow().DateTime;
 
-        using (var semaphore = await GetOrCreateWaitingRepoSemaphore(orderToPickup, ct))
+        using (var semaphore = await GetOrCreateWaitingOrderRepoSemaphore(orderToPickup, ct))
         {
-            var orderActions = _actionRepo[orderToPickup.Id].Actions;
+            var orderActions = _orderRepo[orderToPickup.Id].Actions;
             if (IsOrderProcessed(orderActions))
             {
                 return;
@@ -171,7 +161,7 @@ public class Simulation : IDisposable
     private void PickupOrderFromTargetAt(Order order, string pickupFromTarget, DateTime localNow)
     {
         Action pickupAction = new(localNow, order.Id, ActionType.Pickup, pickupFromTarget);
-        _actionRepo[order.Id].Actions.Add(pickupAction);
+        _orderRepo[order.Id].Actions.Add(pickupAction);
         Console.WriteLine($"Picking up order: {pickupAction,100}");
     }
 
@@ -184,29 +174,28 @@ public class Simulation : IDisposable
 
             Task task = Task.CompletedTask;
 
-            using (var placeSemaphore = await GetOrCreateWaitingRepoSemaphore(order, ct))
+            using (var placeSemaphore = await GetOrCreateWaitingOrderRepoSemaphore(order, ct))
             {
                 _pickableOrders.Add(order);
 
-                var actions = _actionRepo.Values.Select(x => x.Actions).SelectMany(x => x).ToList();
+                var actions = _orderRepo.Values.Select(x => x.Actions).SelectMany(x => x).ToList();
                 if (IsShelf(target))
                 {
                     await TryPlaceOnShelf(config, localNow, order, ct);
                 }
                 else
                 {
-                    if (IsFull(target, config.storageLimits, _actionRepo))
+                    if (IsFull(target, config.storageLimits, _orderRepo))
                     {
                         await TryPlaceOnShelf(config, localNow, order, ct);
                     }
                     else
                     {
-                        PlaceOrderOnTarget(localNow, target, order);
+                        var placemenTime = localNow;
+                        await PlaceOrderOnTarget(placemenTime, target, order, config, ct);
                     }
                 }
 
-                var pickupTime = GetPickupTime(config, localNow);
-                task = PickupSingleOrder(order, pickupTime, ct);
             }
 
             if (task == Task.CompletedTask)
@@ -219,67 +208,123 @@ public class Simulation : IDisposable
         }
     }
 
-    private void PlaceOrderOnTarget(DateTime localNow, string target, Order order)
+    private async Task PlaceOrderOnTarget(
+        DateTime placementTime,
+        string target,
+        Order order,
+        Config config,
+        CancellationToken ct)
     {
-        _actionRepo[order.Id] = (order, new() { });
-        Action action = new(localNow, order.Id, ActionType.Place, target);
-        _actionRepo[order.Id].Actions.Add(action);
-        Console.WriteLine($"Placing order: {action,100}");
+        using (var placeSemaphore = await GetOrCreateWaitingOrderRepoSemaphore(order, ct))
+        // todo kb: storage repo target
+        {
+            // todo kb: do required checks here again
+            // todo kb: use storage repo here instead
+            // todo kb: fix this ridiculous signature
+            // if (!IsFull(target, config.storageLimits, _orderRepo))
+            // {
+            _orderRepo[order.Id] = (order, new() { });
+            Action action = new(placementTime, order.Id, ActionType.Place, target);
+            _orderRepo[order.Id].Actions.Add(action);
+            _pickableOrders.Add(order);
+            Console.WriteLine($"Placing order: {action,100}");
+
+            // schedule followup
+            var pickupTime = GetPickupTime(config, placementTime);
+            var pickupTask = TryPickupSingleOrder(order, pickupTime, ct);
+            _commandHandlerRepo.TryAdd((order, ActionType.Pickup, Target.FromWherever), pickupTask);
+            // }
+            // else
+            // {
+
+            //     var placementRetryTask = TryPlaceOrderAt(config, order, placementTime, target, ct);
+            //     _commandHandlerRepo.TryAdd((order, ActionType.Place, target), placementRetryTask);
+            // }
+
+            need to put actions into both order repo for locking and action ledger for readpurposes.. order repo is not always avialable full which is bad for some calculations
+
+        }
+
     }
 
     private async Task TryPlaceOnShelf(Config config, DateTime localNow, Order order, CancellationToken ct)
     {
-        var target = Target.Shelf;
-        if (IsFull(target, config.storageLimits, _actionRepo))
+        if (IsFull(Target.Shelf, config.storageLimits, _orderRepo))
         {
-            var kvpsWithOrdersOnTarget = KvpsWithOrdersOnTarget(_actionRepo, target);
-            var entriesForOrdersToMove = EntriesForForeignOrdersOnTarget(kvpsWithOrdersOnTarget);
-            Order? orderToMove = null;
+            Command followupCommand = (order, ActionType.Place, Target.Shelf);
+            await TrySolveFullShelf(config, localNow, followupCommand, ct);
+        }
+        var placementTime = localNow;
+        await PlaceOrderOnTarget(placementTime, Target.Shelf, order, config, ct);
+    }
 
-            foreach (var entryForOrderToMove in entriesForOrdersToMove)
+    private async Task TrySolveFullShelf(Config config, DateTime localNow, Command followup, CancellationToken ct)
+    {
+        var kvpsWithOrdersOnShelf = KvpsWithOrdersOnTarget(_orderRepo, Target.Shelf);
+        var entriesForOrdersToMove = EntriesForForeignOrdersOnShelf(kvpsWithOrdersOnShelf);
+        Order? orderToMove = null;
+
+        foreach (var entryForOrderToMove in entriesForOrdersToMove)
+        {
+            var targetToMoveTo = ToTarget(entryForOrderToMove.Order.Temp);
+            if (!IsFull(targetToMoveTo, config.storageLimits, _orderRepo))
             {
-                var targetToMoveTo = ToTarget(entryForOrderToMove.Order.Temp);
-                if (!IsFull(targetToMoveTo, config.storageLimits, _actionRepo))
-                {
-                    orderToMove = entryForOrderToMove.Order;
-                    break;
-                }
+                orderToMove = entryForOrderToMove.Order;
+                break;
             }
-
-            if (orderToMove is not null)
-            {
-                using var moveSemaphore = await GetOrCreateWaitingRepoSemaphore(orderToMove, ct);
-                string moveToTarget = ToTarget(orderToMove.Temp);
-                MoveOrderToTargetAt(orderToMove, moveToTarget, localNow);
-            }
-            else
-            {
-                var kvpToDiscard = CalculateOrderToDiscard(kvpsWithOrdersOnTarget);
-                var orderToDiscard = kvpToDiscard.Value.Order;
-                using var discardSemaphore = await GetOrCreateWaitingRepoSemaphore(orderToDiscard, ct);
-                string discardFromTarget = kvpToDiscard.Value.Actions.Last().Target;
-                DiscardOrderFromTargetAt(orderToDiscard, discardFromTarget, localNow);
-            }
-
-
         }
 
-        PlaceOrderOnTarget(localNow, target, order);
+        if (orderToMove is not null)
+        {
+            string moveToTarget = ToTarget(orderToMove.Temp);
+            await MoveOrderTo(config, orderToMove, moveToTarget, localNow, followup, ct);
+        }
+        else
+        {
+            var kvpToDiscard = CalculateOrderToDiscard(kvpsWithOrdersOnShelf);
+            var orderToDiscard = kvpToDiscard.Value.Order;
+            using var discardSemaphore = await GetOrCreateWaitingOrderRepoSemaphore(orderToDiscard, ct);
+            string discardFromTarget = kvpToDiscard.Value.Actions.Last().Target;
+            // todo kb: pass followup as parameter here too.
+            DiscardOrderFromTargetAt(orderToDiscard, discardFromTarget, localNow);
+        }
     }
 
     private void DiscardOrderFromTargetAt(Order orderToDiscard, string discardFromTarget, DateTime discardAt)
     {
         Action discardAction = new(discardAt, orderToDiscard.Id, ActionType.Discard, discardFromTarget);
-        _actionRepo[orderToDiscard.Id].Actions.Add(discardAction);
+        _orderRepo[orderToDiscard.Id].Actions.Add(discardAction);
         Console.WriteLine($"Discarding order: {discardAction,100}");
     }
 
-    private void MoveOrderToTargetAt(Order orderToMove, string target1, DateTime moveAt)
+    private async Task MoveOrderTo(
+        Config config,
+        Order orderToMove,
+        string target,
+        DateTime moveAt,
+        Command followup,
+        CancellationToken ct)
     {
-        Action moveAction = new(moveAt, orderToMove.Id, ActionType.Move, target1);
-        _actionRepo[orderToMove.Id].Actions.Add(
-                          moveAction);
-        Console.WriteLine($"Moving order: {moveAction,100}");
+
+
+        using (var moveSemaphore = await GetOrCreateWaitingOrderRepoSemaphore(orderToMove, ct))
+        {
+            // todo kb: do required checks here again
+            // if allow, then move and schedule followup, else .. only schedule followup
+
+            Action moveAction = new(moveAt, orderToMove.Id, ActionType.Move, target);
+            _orderRepo[orderToMove.Id].Actions.Add(
+                              moveAction);
+            Console.WriteLine($"Moving order: {moveAction,100}");
+
+            // schedule followup
+            var orderToPlace = followup.Order;
+            var placementTime = moveAt;
+            var placementTask = TryPlaceOrderAt(config, orderToPlace, placementTime, followup.Target, ct);
+            _commandHandlerRepo.TryAdd((orderToPlace, ActionType.Pickup, Target.FromWherever), placementTask);
+
+
+        }
     }
 
 
@@ -289,15 +334,15 @@ public class Simulation : IDisposable
         return kvpsWithOrdersOnTarget.First();
     }
 
-    private async Task WaitUntil(DateTime targetTime, CancellationToken ct)
+    private async Task WaitUntil(DateTime targetWaitTime, CancellationToken ct)
     {
         // new local now might be significantly different
-        var newLocalNow = _time.GetLocalNow().DateTime;
-        TimeSpan delay = targetTime - newLocalNow;
+        var localNow = _time.GetLocalNow().DateTime;
+        TimeSpan delay = targetWaitTime - localNow;
         if (delay < TimeSpan.Zero)
         {
             delay = TimeSpan.Zero;
-            Console.WriteLine($"WARNING: forced to override delay time. {(targetTime, newLocalNow)}");
+            Console.WriteLine($"WARNING: forced to override delay time. {(targetWaitTime, localNow)}");
         }
         await Task.Delay(delay, _time, ct);
     }
@@ -308,11 +353,11 @@ public class Simulation : IDisposable
     }
 
 
-    private static List<RepoEntry> EntriesForForeignOrdersOnTarget(
-    List<KeyValuePair<string, RepoEntry>> kvpsWithOrdersOnTarget)
+    private static List<RepoEntry> EntriesForForeignOrdersOnShelf(
+    List<KeyValuePair<string, RepoEntry>> kvpsWithOrdersOnShelf)
     {
-        var result = kvpsWithOrdersOnTarget
-        .Where(kvp => kvp.Value.Actions.Last().Target != ToTarget(kvp.Value.Order.Temp))
+        var result = kvpsWithOrdersOnShelf
+        .Where(kvp => Target.Shelf != ToTarget(kvp.Value.Order.Temp))
         .Select(kvp => kvp.Value)
         .ToList();
         return result;
@@ -321,9 +366,9 @@ public class Simulation : IDisposable
     private static bool IsFull(
         string target,
         Dictionary<string, int> storageLimits,
-        Dictionary<string, RepoEntry> _actionRepo)
+        Dictionary<string, RepoEntry> actionRepo)
     {
-        var entriesWithOrdersOnTarget = KvpsWithOrdersOnTarget(_actionRepo, target).ToList();
+        var entriesWithOrdersOnTarget = KvpsWithOrdersOnTarget(actionRepo, target).ToList();
         return storageLimits[target] <= entriesWithOrdersOnTarget.Count;
     }
 
@@ -396,12 +441,21 @@ public class Simulation : IDisposable
     public void Dispose()
     {
         _pickableOrders.Clear();
-        _actionRepo.Clear();
-        foreach (var item in _repoSemaphores)
+        _orderRepo.Clear();
+        foreach (var item in _orderRepoSemaphores)
         {
             item.Value.DisposeUndelying();
         }
-        _repoSemaphores.Clear();
+        _orderRepoSemaphores.Clear();
+        _commandHandlerRepo.Clear();
+
+        // _storageRepo.Clear();
+        // foreach (var item in _storageRepoSemaphores)
+        // {
+        //     item.Value.DisposeUndelying();
+        // }
+        // _storageRepoSemaphores.Clear();
+
     }
 }
 
