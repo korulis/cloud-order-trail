@@ -23,6 +23,7 @@ public static class Temperature
 /// <param name="Temp">ideal temperature</param>
 /// <param name="Price">price in dollars</param>
 /// <param name="Freshness">freshness in seconds</param>
+// Need this to be record, so it can be created on different threads and still be recognised as the same entity while being use as a key in dictionary
 public record Order(string Id, string Name, string Temp, long Price, long Freshness);
 
 public record Problem(string TestId, List<Order> Orders);
