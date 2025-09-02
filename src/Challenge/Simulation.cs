@@ -10,7 +10,7 @@ using ActionMarker = (string Id, string ActionType, string Target);
 
 public class Simulation : IDisposable
 {
-    private readonly List<PickableOrder> _pickableOrders = [];
+    private readonly List<Order> _pickableOrders = [];
     private readonly Dictionary<string, RepoEntry> _actionRepo = new() { };
     private readonly ConcurrentDictionary<Order, RepoSemaphore> _repoSemaphores = new();
     private readonly ConcurrentDictionary<ActionMarker, Task> _actionTaskRepo = new();
@@ -52,20 +52,29 @@ public class Simulation : IDisposable
         }
     }
 
-    public async Task PlaceSingleOrderAt(Config config, Order order, TimeSpan placementTime, CancellationToken ct)
+    public async Task PlaceSingleOrderAt(Config config, Order order, DateTime placementTime, CancellationToken ct)
     {
+        var pickupTime = GetPickupTime(config, placementTime);
+        await WaitUntil(placementTime, ct);
+
+        // have consisten local now after waiting
         var localNow = _time.GetLocalNow().DateTime;
-        await WaitUntil(localNow + placementTime, localNow, ct);
+        using (var placeSemaphore = await GetOrCreateWaitingRepoSemaphore(order, ct))
+        {
+            _pickableOrders.Add(order);
 
-        // refresh localNow
-        localNow = _time.GetLocalNow().DateTime;
-
-        return;
+        }
     }
 
+    private static DateTime GetPickupTime(Config config, DateTime placementTime)
+    {
+        return placementTime + TimeSpan.FromMicroseconds(new Random().NextInt64(config.min, config.max));
+    }
 
     public async Task<List<Action>> Simulate(Config config, List<Order> orders, CancellationToken ct)
     {
+        var localNow = _time.GetLocalNow().DateTime;
+
         // todo kb: convert orders to IAsyncEnumerable<Order> stream and try to use that instead of List
         // that would demonstrate that orders can even come as an async stream from, say, a http multipart request handling
         // this would probably require splitting incoming orders (order placement tasks) 
@@ -74,7 +83,7 @@ public class Simulation : IDisposable
 
         orders.Select((Order x, int i) =>
         {
-            var placementTask = PlaceSingleOrderAt(config, x, TimeSpan.FromMicroseconds(i * config.rate), ct);
+            var placementTask = PlaceSingleOrderAt(config, x, localNow + TimeSpan.FromMicroseconds(i * config.rate), ct);
             var key = (x.Id, ActionType: ActionType.Place, Target: ToTarget(x.Temp));
             _actionTaskRepo.TryAdd(key, placementTask);
             return i;
@@ -115,7 +124,7 @@ public class Simulation : IDisposable
 
     private async Task PickupSingleOrder(PickableOrder orderToPickup, CancellationToken ct)
     {
-        await WaitUntil(orderToPickup.PickupTime, _time.GetLocalNow().DateTime, ct);
+        await WaitUntil(orderToPickup.PickupTime, ct);
 
         var localNow = _time.GetLocalNow().DateTime;
 
@@ -159,7 +168,7 @@ public class Simulation : IDisposable
 
             using (var placeSemaphore = await GetOrCreateWaitingRepoSemaphore(simpleOrder, ct))
             {
-                _pickableOrders.Add(pickableOrder);
+                _pickableOrders.Add(simpleOrder);
 
                 var actions = _actionRepo.Values.Select(x => x.Actions).SelectMany(x => x).ToList();
                 if (IsShelf(target))
@@ -187,7 +196,7 @@ public class Simulation : IDisposable
             }
             yield return task;
 
-            await WaitUntil(localNow.AddMicroseconds(config.rate), localNow, ct);
+            await WaitUntil(localNow.AddMicroseconds(config.rate), ct);
         }
     }
 
@@ -261,7 +270,7 @@ public class Simulation : IDisposable
         return kvpsWithOrdersOnTarget.First();
     }
 
-    private async Task WaitUntil(DateTime targetTime, DateTime baseLocalNow, CancellationToken ct)
+    private async Task WaitUntil(DateTime targetTime, CancellationToken ct)
     {
         // new local now might be significantly different
         var newLocalNow = _time.GetLocalNow().DateTime;
@@ -427,6 +436,8 @@ public record PickableOrder
         PickupTime = pickupTime;
         Order = order;
     }
+
+    // todo kb: delete
     public static long RandomBetween(long min, long max)
     {
         var result = new Random().NextInt64(min, max);
