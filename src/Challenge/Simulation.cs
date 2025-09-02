@@ -60,6 +60,10 @@ public class Simulation : IDisposable
 
     private static bool IsOrderProcessed(IEnumerable<Action> actions)
     {
+        if (actions.Any(x => x.Id == "s1.1"))
+        {
+            Console.WriteLine("LKLKLKLKLKLKLKLKLKLKLKLKLKLKLKLKLKLKLKLKLKLKLKLKLKLKLKLKLKLKLKLKLKLKLKLKLKLKLKLK");
+        }
         return IsFinal(actions.Last());
     }
 
