@@ -5,7 +5,7 @@ using System.Text.Json;
 
 namespace Challenge;
 
-using RepoEntry = (PickableOrder Order, List<Action> Actions);
+using RepoEntry = (Order Order, List<Action> Actions);
 using ActionMarker = (string Id, string ActionType, string Target);
 
 public class Simulation : IDisposable
@@ -61,7 +61,27 @@ public class Simulation : IDisposable
         var localNow = _time.GetLocalNow().DateTime;
         using (var placeSemaphore = await GetOrCreateWaitingRepoSemaphore(order, ct))
         {
+            var target = ToTarget(order.Temp);
             _pickableOrders.Add(order);
+
+            // var actions = _actionRepo.Values.Select(x => x.Actions).SelectMany(x => x).ToList();
+            if (IsShelf(target))
+            {
+                await TryPlaceOnShelf(config, localNow, order, ct);
+            }
+            else
+            {
+                if (IsFull(target, config.storageLimits, _actionRepo))
+                {
+                    await TryPlaceOnShelf(config, localNow, order, ct);
+                }
+                else
+                {
+                    PlaceOrderOnTarget(localNow, target, order);
+                }
+            }
+
+            // PickupSingleOrder2(pickableOrder, ct);
 
         }
     }
@@ -122,13 +142,13 @@ public class Simulation : IDisposable
         return IsFinal(actions.Last());
     }
 
-    private async Task PickupSingleOrder(PickableOrder orderToPickup, CancellationToken ct)
+    private async Task PickupSingleOrder(Order orderToPickup, DateTime pickupTime, CancellationToken ct)
     {
-        await WaitUntil(orderToPickup.PickupTime, ct);
+        await WaitUntil(pickupTime, ct);
 
         var localNow = _time.GetLocalNow().DateTime;
 
-        using (var semaphore = await GetOrCreateWaitingRepoSemaphore(orderToPickup.Order, ct))
+        using (var semaphore = await GetOrCreateWaitingRepoSemaphore(orderToPickup, ct))
         {
             var orderActions = _actionRepo[orderToPickup.Id].Actions;
             if (IsOrderProcessed(orderActions))
@@ -138,61 +158,60 @@ public class Simulation : IDisposable
             if (IsFresh(orderToPickup, orderActions, localNow))
             {
                 string pickupFromTarget = orderActions.Last().Target;
-                PickupOrderFromTargetAt(orderToPickup, pickupFromTarget, orderToPickup.PickupTime);
+                PickupOrderFromTargetAt(orderToPickup, pickupFromTarget, localNow);
             }
             else
             {
                 string discardFromTarget = orderActions.Last().Target;
-                DiscardOrderFromTargetAt(orderToPickup, discardFromTarget, orderToPickup.PickupTime);
+                DiscardOrderFromTargetAt(orderToPickup, discardFromTarget, localNow);
             }
         }
     }
 
-    private void PickupOrderFromTargetAt(PickableOrder order, string pickupFromTarget, DateTime pickupTime)
+    private void PickupOrderFromTargetAt(Order order, string pickupFromTarget, DateTime localNow)
     {
-        Action pickupAction = new(pickupTime, order.Id, ActionType.Pickup, pickupFromTarget);
+        Action pickupAction = new(localNow, order.Id, ActionType.Pickup, pickupFromTarget);
         _actionRepo[order.Id].Actions.Add(pickupAction);
         Console.WriteLine($"Picking up order: {pickupAction,100}");
     }
 
     private async IAsyncEnumerable<Task> PlaceOrders(Config config, List<Order> orders, [EnumeratorCancellation] CancellationToken ct)
     {
-        foreach (var simpleOrder in orders)
+        foreach (var order in orders)
         {
             var localNow = _time.GetLocalNow().DateTime;
-            var target = ToTarget(simpleOrder.Temp);
+            var target = ToTarget(order.Temp);
 
-            var pickupInMicroseconds = PickableOrder.RandomBetween(config.min, config.max);
-            PickableOrder pickableOrder = new(simpleOrder, localNow.AddMicroseconds(pickupInMicroseconds));
             Task task = Task.CompletedTask;
 
-            using (var placeSemaphore = await GetOrCreateWaitingRepoSemaphore(simpleOrder, ct))
+            using (var placeSemaphore = await GetOrCreateWaitingRepoSemaphore(order, ct))
             {
-                _pickableOrders.Add(simpleOrder);
+                _pickableOrders.Add(order);
 
                 var actions = _actionRepo.Values.Select(x => x.Actions).SelectMany(x => x).ToList();
                 if (IsShelf(target))
                 {
-                    await TryPlaceOnShelf(config, localNow, pickableOrder, ct);
+                    await TryPlaceOnShelf(config, localNow, order, ct);
                 }
                 else
                 {
                     if (IsFull(target, config.storageLimits, _actionRepo))
                     {
-                        await TryPlaceOnShelf(config, localNow, pickableOrder, ct);
+                        await TryPlaceOnShelf(config, localNow, order, ct);
                     }
                     else
                     {
-                        PlaceOrderOnTarget(localNow, target, pickableOrder);
+                        PlaceOrderOnTarget(localNow, target, order);
                     }
                 }
 
-                task = PickupSingleOrder(pickableOrder, ct);
+                var pickupTime = GetPickupTime(config, localNow);
+                task = PickupSingleOrder(order, pickupTime, ct);
             }
 
             if (task == Task.CompletedTask)
             {
-                throw new Exception($"Task was not created properly {JsonSerializer.Serialize(pickableOrder)}");
+                throw new Exception($"Task was not created properly {JsonSerializer.Serialize(order)}");
             }
             yield return task;
 
@@ -200,22 +219,22 @@ public class Simulation : IDisposable
         }
     }
 
-    private void PlaceOrderOnTarget(DateTime localNow, string target, PickableOrder pickableOrder)
+    private void PlaceOrderOnTarget(DateTime localNow, string target, Order order)
     {
-        _actionRepo[pickableOrder.Id] = (pickableOrder, new() { });
-        Action action = new(localNow, pickableOrder.Id, ActionType.Place, target);
-        _actionRepo[pickableOrder.Id].Actions.Add(action);
+        _actionRepo[order.Id] = (order, new() { });
+        Action action = new(localNow, order.Id, ActionType.Place, target);
+        _actionRepo[order.Id].Actions.Add(action);
         Console.WriteLine($"Placing order: {action,100}");
     }
 
-    private async Task TryPlaceOnShelf(Config config, DateTime localNow, PickableOrder pickableOrder, CancellationToken ct)
+    private async Task TryPlaceOnShelf(Config config, DateTime localNow, Order order, CancellationToken ct)
     {
         var target = Target.Shelf;
         if (IsFull(target, config.storageLimits, _actionRepo))
         {
             var kvpsWithOrdersOnTarget = KvpsWithOrdersOnTarget(_actionRepo, target);
             var entriesForOrdersToMove = EntriesForForeignOrdersOnTarget(kvpsWithOrdersOnTarget);
-            PickableOrder? orderToMove = null;
+            Order? orderToMove = null;
 
             foreach (var entryForOrderToMove in entriesForOrdersToMove)
             {
@@ -229,7 +248,7 @@ public class Simulation : IDisposable
 
             if (orderToMove is not null)
             {
-                using var moveSemaphore = await GetOrCreateWaitingRepoSemaphore(orderToMove.Order, ct);
+                using var moveSemaphore = await GetOrCreateWaitingRepoSemaphore(orderToMove, ct);
                 string moveToTarget = ToTarget(orderToMove.Temp);
                 MoveOrderToTargetAt(orderToMove, moveToTarget, localNow);
             }
@@ -237,7 +256,7 @@ public class Simulation : IDisposable
             {
                 var kvpToDiscard = CalculateOrderToDiscard(kvpsWithOrdersOnTarget);
                 var orderToDiscard = kvpToDiscard.Value.Order;
-                using var discardSemaphore = await GetOrCreateWaitingRepoSemaphore(orderToDiscard.Order, ct);
+                using var discardSemaphore = await GetOrCreateWaitingRepoSemaphore(orderToDiscard, ct);
                 string discardFromTarget = kvpToDiscard.Value.Actions.Last().Target;
                 DiscardOrderFromTargetAt(orderToDiscard, discardFromTarget, localNow);
             }
@@ -245,17 +264,17 @@ public class Simulation : IDisposable
 
         }
 
-        PlaceOrderOnTarget(localNow, target, pickableOrder);
+        PlaceOrderOnTarget(localNow, target, order);
     }
 
-    private void DiscardOrderFromTargetAt(PickableOrder orderToDiscard, string discardFromTarget, DateTime discardAt)
+    private void DiscardOrderFromTargetAt(Order orderToDiscard, string discardFromTarget, DateTime discardAt)
     {
         Action discardAction = new(discardAt, orderToDiscard.Id, ActionType.Discard, discardFromTarget);
         _actionRepo[orderToDiscard.Id].Actions.Add(discardAction);
         Console.WriteLine($"Discarding order: {discardAction,100}");
     }
 
-    private void MoveOrderToTargetAt(PickableOrder orderToMove, string target1, DateTime moveAt)
+    private void MoveOrderToTargetAt(Order orderToMove, string target1, DateTime moveAt)
     {
         Action moveAction = new(moveAt, orderToMove.Id, ActionType.Move, target1);
         _actionRepo[orderToMove.Id].Actions.Add(
@@ -325,14 +344,14 @@ public class Simulation : IDisposable
         return lastOrderAction.ActionType == ActionType.Discard || lastOrderAction.ActionType == ActionType.Pickup;
     }
 
-    private static bool IsFresh(PickableOrder order, List<Action> orderActions, DateTime localNow)
+    private static bool IsFresh(Order order, List<Action> orderActions, DateTime localNow)
     {
         var spoilage = Spoilage(order, orderActions, localNow);
         var result = spoilage <= TimeSpan.FromSeconds(order.Freshness);
         return result;
     }
 
-    private static TimeSpan Spoilage(PickableOrder order, List<Action> orderActions, DateTime localNow)
+    private static TimeSpan Spoilage(Order order, List<Action> orderActions, DateTime localNow)
     {
         TimeSpan spoilage;
         var placementTime = orderActions.First().GetOriginalTimestamp();
@@ -420,28 +439,28 @@ public class RepoSemaphore : IDisposable
     }
 }
 
-// need this to be record, so it can be created on different threads and still be recognised as the same entity while being use as a key in dictionary
-public record PickableOrder
-{
-    public DateTime PickupTime { get; init; }
-    public Order Order { get; init; }
-    public string Id => Order.Id;
-    public string Name => Order.Name;
-    public string Temp => Order.Temp;
-    public long Price => Order.Price;
-    public long Freshness => Order.Freshness;
+// // need this to be record, so it can be created on different threads and still be recognised as the same entity while being use as a key in dictionary
+// public record PickableOrder
+// {
+//     public DateTime PickupTime { get; init; }
+//     public Order Order { get; init; }
+//     public string Id => Order.Id;
+//     public string Name => Order.Name;
+//     public string Temp => Order.Temp;
+//     public long Price => Order.Price;
+//     public long Freshness => Order.Freshness;
 
-    public PickableOrder(Order order, DateTime pickupTime)
-    {
-        PickupTime = pickupTime;
-        Order = order;
-    }
+//     public PickableOrder(Order order, DateTime pickupTime)
+//     {
+//         PickupTime = pickupTime;
+//         Order = order;
+//     }
 
-    // todo kb: delete
-    public static long RandomBetween(long min, long max)
-    {
-        var result = new Random().NextInt64(min, max);
-        return result;
-    }
+//     // todo kb: delete
+//     public static long RandomBetween(long min, long max)
+//     {
+//         var result = new Random().NextInt64(min, max);
+//         return result;
+//     }
 
-}
+// }
