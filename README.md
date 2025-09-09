@@ -40,6 +40,12 @@ $ dotnet run -- --auth <token>
 - It took me a while to realize that due to the fact that pickup times are random and the fact that there is not much certainty at which point which Task will be picked up or which thread will process it - it is not possible to solve the simulation with 100% reproducible results (even if the same seed was used to generate pickup times). By that time I had invested quite a lot of work into the current asynchronicity model (using semaphores and concurent dictionary up to an extent). Preferred path onwards for the code would be to 1. make PickupSingleOrder and PlaceOrders become rentrant. That would enable next step : 2. chop processing pipeline into events/commands and event/command handlers (naturally, idempotent). That would enable releasing semaphores earlier (more opportunistically), have less nested semaphores - better performance, and even more impresively, create a dictionary that tracks state of storage `Dict<temp, List<Order>>` . For as long as the order in which different entries of this dictionary are being locked is respected there should be no deadlocks. The side effect of this would be that the simulation would from time to time produce move and discard actions that are (always possible but) not always necessary, but that is a nature of a system operating in events as opposed to current - semi-rpc approach. Next would be to 3. try use `AddOrUpdate()` and `GetOrCreate()` from `ConcurentDictionary` heavily relying on overloads with create, add and update factory parameters/funcions/callbacs and putting most if not all business logic into these callbacks. I do not have a clear vision how (or if at all) this would work, but if it did I would expect that no semaphores would be needed (the performance concerns would be completely outsourced to .NET framework team ;) ).
 - if the order fails to be place at exact placement time (and is delayed a few milliseconds) the pickup time will be based on actual placement time instead of initial intended placement time.
 
--Try vs not Try
--- Try methods have unverified calculations (hints), nested try method invocations and regular method invocations
--- Regular methods have locks -> verified calculations (conditions) -> adding actions to ledger -> scheduling followups
+- Try vs not Try:
+  - Try methods have unverified calculations (hints), nested try method invocations and regular method invocations
+  - Hard methods have locks -> verified calculations (conditions) -> adding actions to ledger -> scheduling followups
+  - Allowed command followups:
+    - Place => Pickup
+    - Place => Move (different order)
+    - Place => Discard (different order)
+    - Place => Discard (original order)
+    - Move => Place (original order)

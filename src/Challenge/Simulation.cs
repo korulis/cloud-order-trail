@@ -251,7 +251,10 @@ public class Simulation : IDisposable
             // schedule followup
             var pickupTime = GetPickupTime(config, placementTime);
             var pickupTask = TryPickupSingleOrder(order, pickupTime, ct);
-            _commandHandlerRepo[(order, ActionType.Pickup, Target.FromWherever)] = pickupTask;
+            // todo kb: return task to be scheduled instead of mutating??? 
+            // pro:this would allow to see that only one side effect at a time is possible..
+            // con: would happen outside of semaphore.. would allow 2 contradicting commands to be scheduled... buuut only one of them would be completed, so.. it's ok.
+            _commandHandlerRepo[(order, ActionType.Pickup, target)] = pickupTask;
             // }
             // else
             // {
@@ -270,6 +273,7 @@ public class Simulation : IDisposable
     {
         if (IsFull(Target.Shelf, config.storageLimits, _orderRepo))
         {
+            // todo kb: maybe we do not have to create follow up right now. Later?
             Command followupCommand = (order, ActionType.Place, Target.Shelf);
             await TrySolveFullShelf(config, localNow, followupCommand, ct);
         }
@@ -338,11 +342,11 @@ public class Simulation : IDisposable
             _actionLedger.Add(action);
             Console.WriteLine($"Moving order: {action,100}");
 
-            // schedule followup
+            // schedule followup: place original
             var orderToPlace = followup.Order;
             var placementTime = moveAt;
             var placementTask = TryPlaceOrderAt(config, orderToPlace, placementTime, followup.Target, ct);
-            _commandHandlerRepo.TryAdd((orderToPlace, ActionType.Pickup, Target.FromWherever), placementTask);
+            _commandHandlerRepo.TryAdd((orderToPlace, ActionType.Pickup, followup.Target), placementTask);
 
         }
     }
