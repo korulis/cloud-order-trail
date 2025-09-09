@@ -1,16 +1,18 @@
 using System.Collections.Concurrent;
-using System.Linq.Expressions;
 using System.Runtime.CompilerServices;
 using System.Text.Json;
 
 namespace Challenge;
 
 using RepoEntry = (Order Order, List<Action> Actions);
+// todo kb: dont need Target because this DTO is only for uniqueness, not information. Information of target is in the Task itself.
 using Command = (Order Order, string ActionType, string Target);
 
 public class Simulation : IDisposable
 {
     private readonly List<Order> _pickableOrders = [];
+    // this is like read model in CQRS. It should be available for read at all times. Not locked. .ToList() should be used before reading.
+    private readonly ConcurrentBag<Action> _actionLedger = [];
     private readonly Dictionary<string, RepoEntry> _orderRepo = new() { };
     private readonly ConcurrentDictionary<Order, RepoSemaphore> _orderRepoSemaphores = new();
     private readonly ConcurrentDictionary<Command, Task> _commandHandlerRepo = new();
@@ -25,6 +27,12 @@ public class Simulation : IDisposable
     //     return semaphore;
     // }
 
+    /// <summary>
+    /// Meant to lock order related operations. Order mutating operations should happen only in the scope of provided semaphore.
+    /// </summary>
+    /// <param name="order"></param>
+    /// <param name="ct"></param>
+    /// <returns></returns>
     private async Task<RepoSemaphore> GetOrCreateWaitingOrderRepoSemaphore(Order order, CancellationToken ct)
     {
         var semaphore = _orderRepoSemaphores.GetOrAdd(order, new RepoSemaphore());
@@ -52,6 +60,8 @@ public class Simulation : IDisposable
     {
         _time = time;
     }
+
+    // todo kb: remove unused methods.
     private static async IAsyncEnumerable<Order> GetOrdersAsAsyncStream(List<Order> orders)
     {
         foreach (var order in orders)
@@ -63,6 +73,7 @@ public class Simulation : IDisposable
 
     public async Task TryPlaceOrderAt(Config config, Order order, DateTime placementTime, string target, CancellationToken ct)
     {
+        // todo kb: export this outside of this fct
         await WaitUntil(placementTime, ct);
 
         // have consisten local now after waiting
@@ -80,7 +91,7 @@ public class Simulation : IDisposable
             }
             else
             {
-                await PlaceOrderOnTarget(localNow, target, order, config, ct);
+                await HardPlace(localNow, target, order, config, ct);
             }
         }
 
@@ -110,6 +121,7 @@ public class Simulation : IDisposable
                 ToTarget(x.Temp),
                 ct);
             var key = (x, ActionType: ActionType.Place, Target: ToTarget(x.Temp));
+            // Ignore failure. If this fails - it is ok, that means somebody already created the task we need.
             _commandHandlerRepo.TryAdd(key, placementTask);
             return i;
         }).ToList();
@@ -148,21 +160,26 @@ public class Simulation : IDisposable
             if (IsFresh(orderToPickup, orderActions, localNow))
             {
                 string pickupFromTarget = orderActions.Last().Target;
-                PickupOrderFromTargetAt(orderToPickup, pickupFromTarget, localNow);
+                await HardPickup(orderToPickup, pickupFromTarget, localNow, ct);
             }
             else
             {
                 string discardFromTarget = orderActions.Last().Target;
-                DiscardOrderFromTargetAt(orderToPickup, discardFromTarget, localNow);
+                await HardDiscard(orderToPickup, discardFromTarget, localNow, ct);
             }
         }
     }
 
-    private void PickupOrderFromTargetAt(Order order, string pickupFromTarget, DateTime localNow)
+    private async Task HardPickup(Order order, string pickupFromTarget, DateTime localNow, CancellationToken ct)
     {
-        Action pickupAction = new(localNow, order.Id, ActionType.Pickup, pickupFromTarget);
-        _orderRepo[order.Id].Actions.Add(pickupAction);
-        Console.WriteLine($"Picking up order: {pickupAction,100}");
+        // todo kb: use default scope syntax
+        using (var semaphore = await GetOrCreateWaitingOrderRepoSemaphore(order, ct))
+        {
+            Action pickupAction = new(localNow, order.Id, ActionType.Pickup, pickupFromTarget);
+            _actionLedger.Add(pickupAction);
+            _orderRepo[order.Id].Actions.Add(pickupAction);
+            Console.WriteLine($"Picking up order: {pickupAction,100}");
+        }
     }
 
     private async IAsyncEnumerable<Task> PlaceOrders(Config config, List<Order> orders, [EnumeratorCancellation] CancellationToken ct)
@@ -192,7 +209,7 @@ public class Simulation : IDisposable
                     else
                     {
                         var placemenTime = localNow;
-                        await PlaceOrderOnTarget(placemenTime, target, order, config, ct);
+                        await HardPlace(placemenTime, target, order, config, ct);
                     }
                 }
 
@@ -208,14 +225,15 @@ public class Simulation : IDisposable
         }
     }
 
-    private async Task PlaceOrderOnTarget(
+    private async Task HardPlace(
+        // todo kb: think about why shouldnt all placementTimes and pickupTimes just be continuously sourced from provided instead.
         DateTime placementTime,
         string target,
         Order order,
         Config config,
         CancellationToken ct)
     {
-        using (var placeSemaphore = await GetOrCreateWaitingOrderRepoSemaphore(order, ct))
+        using (var semaphore = await GetOrCreateWaitingOrderRepoSemaphore(order, ct))
         // todo kb: storage repo target
         {
             // todo kb: do required checks here again
@@ -226,13 +244,14 @@ public class Simulation : IDisposable
             _orderRepo[order.Id] = (order, new() { });
             Action action = new(placementTime, order.Id, ActionType.Place, target);
             _orderRepo[order.Id].Actions.Add(action);
+            _actionLedger.Add(action);
             _pickableOrders.Add(order);
             Console.WriteLine($"Placing order: {action,100}");
 
             // schedule followup
             var pickupTime = GetPickupTime(config, placementTime);
             var pickupTask = TryPickupSingleOrder(order, pickupTime, ct);
-            _commandHandlerRepo.TryAdd((order, ActionType.Pickup, Target.FromWherever), pickupTask);
+            _commandHandlerRepo[(order, ActionType.Pickup, Target.FromWherever)] = pickupTask;
             // }
             // else
             // {
@@ -241,7 +260,7 @@ public class Simulation : IDisposable
             //     _commandHandlerRepo.TryAdd((order, ActionType.Place, target), placementRetryTask);
             // }
 
-            need to put actions into both order repo for locking and action ledger for readpurposes.. order repo is not always avialable full which is bad for some calculations
+            //todo kb: need to put actions into both order repo for locking and action ledger for readpurposes.. order repo is not always avialable full which is bad for some calculations
 
         }
 
@@ -255,7 +274,7 @@ public class Simulation : IDisposable
             await TrySolveFullShelf(config, localNow, followupCommand, ct);
         }
         var placementTime = localNow;
-        await PlaceOrderOnTarget(placementTime, Target.Shelf, order, config, ct);
+        await HardPlace(placementTime, Target.Shelf, order, config, ct);
     }
 
     private async Task TrySolveFullShelf(Config config, DateTime localNow, Command followup, CancellationToken ct)
@@ -277,7 +296,7 @@ public class Simulation : IDisposable
         if (orderToMove is not null)
         {
             string moveToTarget = ToTarget(orderToMove.Temp);
-            await MoveOrderTo(config, orderToMove, moveToTarget, localNow, followup, ct);
+            await HardMove(config, orderToMove, moveToTarget, localNow, followup, ct);
         }
         else
         {
@@ -286,43 +305,44 @@ public class Simulation : IDisposable
             using var discardSemaphore = await GetOrCreateWaitingOrderRepoSemaphore(orderToDiscard, ct);
             string discardFromTarget = kvpToDiscard.Value.Actions.Last().Target;
             // todo kb: pass followup as parameter here too.
-            DiscardOrderFromTargetAt(orderToDiscard, discardFromTarget, localNow);
+            await HardDiscard(orderToDiscard, discardFromTarget, localNow, ct);
         }
     }
 
-    private void DiscardOrderFromTargetAt(Order orderToDiscard, string discardFromTarget, DateTime discardAt)
+    private async Task HardDiscard(Order order, string discardFromTarget, DateTime discardAt, CancellationToken ct)
     {
-        Action discardAction = new(discardAt, orderToDiscard.Id, ActionType.Discard, discardFromTarget);
-        _orderRepo[orderToDiscard.Id].Actions.Add(discardAction);
-        Console.WriteLine($"Discarding order: {discardAction,100}");
+        using (var semaphore = await GetOrCreateWaitingOrderRepoSemaphore(order, ct))
+        {
+            Action action = new(discardAt, order.Id, ActionType.Discard, discardFromTarget);
+            _actionLedger.Add(action);
+            _orderRepo[order.Id].Actions.Add(action);
+            Console.WriteLine($"Discarding order: {action,100}");
+        }
     }
 
-    private async Task MoveOrderTo(
+    private async Task HardMove(
         Config config,
-        Order orderToMove,
+        Order order,
         string target,
         DateTime moveAt,
         Command followup,
         CancellationToken ct)
     {
-
-
-        using (var moveSemaphore = await GetOrCreateWaitingOrderRepoSemaphore(orderToMove, ct))
+        using (var semaphore = await GetOrCreateWaitingOrderRepoSemaphore(order, ct))
         {
             // todo kb: do required checks here again
             // if allow, then move and schedule followup, else .. only schedule followup
 
-            Action moveAction = new(moveAt, orderToMove.Id, ActionType.Move, target);
-            _orderRepo[orderToMove.Id].Actions.Add(
-                              moveAction);
-            Console.WriteLine($"Moving order: {moveAction,100}");
+            Action action = new(moveAt, order.Id, ActionType.Move, target);
+            _orderRepo[order.Id].Actions.Add(action);
+            _actionLedger.Add(action);
+            Console.WriteLine($"Moving order: {action,100}");
 
             // schedule followup
             var orderToPlace = followup.Order;
             var placementTime = moveAt;
             var placementTask = TryPlaceOrderAt(config, orderToPlace, placementTime, followup.Target, ct);
             _commandHandlerRepo.TryAdd((orderToPlace, ActionType.Pickup, Target.FromWherever), placementTask);
-
 
         }
     }
