@@ -150,23 +150,20 @@ public class Simulation : IDisposable
 
         var localNow = _time.GetLocalNow().DateTime;
 
-        using (var semaphore = await GetOrCreateWaitingOrderRepoSemaphore(orderToPickup, ct))
+        var orderActions = _orderRepo[orderToPickup.Id].Actions;
+        if (IsOrderProcessed(orderActions))
         {
-            var orderActions = _orderRepo[orderToPickup.Id].Actions;
-            if (IsOrderProcessed(orderActions))
-            {
-                return;
-            }
-            if (IsFresh(orderToPickup, orderActions, localNow))
-            {
-                string pickupFromTarget = orderActions.Last().Target;
-                await HardPickup(orderToPickup, pickupFromTarget, localNow, ct);
-            }
-            else
-            {
-                string discardFromTarget = orderActions.Last().Target;
-                await HardDiscard(orderToPickup, discardFromTarget, localNow, ct);
-            }
+            return;
+        }
+        if (IsFresh(orderToPickup, orderActions, localNow))
+        {
+            string pickupFromTarget = orderActions.Last().Target;
+            await HardPickup(orderToPickup, pickupFromTarget, localNow, ct);
+        }
+        else
+        {
+            string discardFromTarget = orderActions.Last().Target;
+            await HardDiscard(orderToPickup, discardFromTarget, localNow, ct);
         }
     }
 
@@ -306,7 +303,6 @@ public class Simulation : IDisposable
         {
             var kvpToDiscard = CalculateOrderToDiscard(kvpsWithOrdersOnShelf);
             var orderToDiscard = kvpToDiscard.Value.Order;
-            using var discardSemaphore = await GetOrCreateWaitingOrderRepoSemaphore(orderToDiscard, ct);
             string discardFromTarget = kvpToDiscard.Value.Actions.Last().Target;
             // todo kb: pass followup as parameter here too.
             await HardDiscard(orderToDiscard, discardFromTarget, localNow, ct);
