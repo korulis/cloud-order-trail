@@ -152,7 +152,7 @@ public class SimulateTests : IDisposable
     }
 
     [Fact()]
-    public async Task Puts_SingleOrderInEachTarget()
+    public async Task Puts_AnOrderInEachTarget()
     {
         // Arrange
         List<Order> orders = [

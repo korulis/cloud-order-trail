@@ -79,15 +79,39 @@ public class Simulation : IDisposable
         // have consisten local now after waiting
         var localNow = _time.GetLocalNow().DateTime;
 
+
+        // todo kb: maybe we do not have to create follow up right now. Later?
+        System.Action followup = () => _commandHandlerRepo.TryAdd(
+            (order, ActionType.Place, target),
+            TryPlaceOrder(config, order, localNow, target, ct, retryCount + 1));
+        // Console.WriteLine("GGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGG in TryPlaceOrder after creating followup" + JsonSerializer.Serialize(new { order, placementTime, target }));
+
         if (IsShelf(target))
         {
-            await TryPlaceOnShelf(config, localNow, order, ct);
+            if (IsFull(Target.Shelf, config.storageLimits, _orderRepo))
+            {
+                await TrySolveFullShelf(config, localNow, followup, ct);
+            }
+            else
+            {
+                // Console.WriteLine("GGGGGGGGGGGGGGGGGGGGGGGG in TryPlaceOrder shelf not full, placing" + order.Id);
+                await HardPlace(localNow, Target.Shelf, order, config, ct);
+                // Console.WriteLine("GGGGGGGGGGGGGGGGGGGGGGGG in TryPlaceOrder after placing" + order.Id);
+            }
+
         }
         else
         {
             if (IsFull(target, config.storageLimits, _orderRepo))
             {
-                await TryPlaceOnShelf(config, localNow, order, ct);
+                if (IsFull(Target.Shelf, config.storageLimits, _orderRepo))
+                {
+                    await TrySolveFullShelf(config, localNow, followup, ct);
+                }
+                else
+                {
+                    await HardPlace(localNow, Target.Shelf, order, config, ct);
+                }
             }
             else
             {
@@ -112,27 +136,34 @@ public class Simulation : IDisposable
         // and tasks being spawned (followup order actions) into two separate lists
         // ...not lists, but IAsyncEnumerable streams, then merge them and then await foreach to completion
 
-        orders.Select((Order x, int i) =>
+        orders.Select((Order order, int i) =>
         {
-            var placementTask = TryPlaceOrderAt(
+            // Console.WriteLine("GGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGG before creating placement task");
+            var placementTask = TryPlaceOrder(
                 config,
-                x,
+                order,
                 localNow + TimeSpan.FromMicroseconds(i * config.rate),
-                ToTarget(x.Temp),
+                ToTarget(order.Temp),
                 ct);
-            var key = (x, ActionType: ActionType.Place, Target: ToTarget(x.Temp));
+            var key = (order, ActionType: ActionType.Place, Target: ToTarget(order.Temp));
             // Ignore failure. If this fails - it is ok, that means somebody already created the task we need.
+            // Console.WriteLine("GGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGG before adding placement task");
             _commandHandlerRepo.TryAdd(key, placementTask);
+            // Console.WriteLine("GGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGG after adding placement task");
             return i;
         }).ToList();
 
         // the condition here could be also be checking list of completed orders.
         while (_commandHandlerRepo.Values.Any(x => !x.IsCompleted))
         {
-            IEnumerable<Task> values = _commandHandlerRepo.Values.Where(x => !x.IsCompleted);
-            Task completedTask = await Task.WhenAny(values);
+            // Console.WriteLine("GGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGG before filtering order tasks " + _commandHandlerRepo.Count);
+            var unfinishedTasks = _commandHandlerRepo.Values.Where(x => !x.IsCompleted).ToList();
+            // Console.WriteLine("1GGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGG current amount of orderTasks: " + unfinishedTasks.Count());
+            Task completedTask = await Task.WhenAny(unfinishedTasks);
+            // Console.WriteLine("2GGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGG current amount of orderTasks: " + completedTask.IsCompleted + " " + unfinishedTasks.Count());
             // rethrow exceptions if any
             await completedTask;
+            // Console.WriteLine("3GGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGG current amount of orderTasks: " + unfinishedTasks.Count());
         }
 
         var result = _orderRepo.Select(kvp => kvp.Value.Actions).SelectMany(x => x).OrderBy(x => x.Timestamp).ToList();
@@ -266,19 +297,7 @@ public class Simulation : IDisposable
 
     }
 
-    private async Task TryPlaceOnShelf(Config config, DateTime localNow, Order order, CancellationToken ct)
-    {
-        if (IsFull(Target.Shelf, config.storageLimits, _orderRepo))
-        {
-            // todo kb: maybe we do not have to create follow up right now. Later?
-            Command followupCommand = (order, ActionType.Place, Target.Shelf);
-            await TrySolveFullShelf(config, localNow, followupCommand, ct);
-        }
-        var placementTime = localNow;
-        await HardPlace(placementTime, Target.Shelf, order, config, ct);
-    }
-
-    private async Task TrySolveFullShelf(Config config, DateTime localNow, Command followup, CancellationToken ct)
+    private async Task TrySolveFullShelf(Config config, DateTime localNow, System.Action followup, CancellationToken ct)
     {
         var kvpsWithOrdersOnShelf = KvpsWithOrdersOnTarget(_orderRepo, Target.Shelf);
         var entriesForOrdersToMove = EntriesForForeignOrdersOnShelf(kvpsWithOrdersOnShelf);
@@ -305,11 +324,11 @@ public class Simulation : IDisposable
             var orderToDiscard = kvpToDiscard.Value.Order;
             string discardFromTarget = kvpToDiscard.Value.Actions.Last().Target;
             // todo kb: pass followup as parameter here too.
-            await HardDiscard(orderToDiscard, discardFromTarget, localNow, ct);
+            await HardDiscard(orderToDiscard, discardFromTarget, localNow, followup, ct);
         }
     }
 
-    private async Task HardDiscard(Order order, string discardFromTarget, DateTime discardAt, CancellationToken ct)
+    private async Task HardDiscard(Order order, string discardFromTarget, DateTime discardAt, System.Action? followup, CancellationToken ct)
     {
         using (var semaphore = await GetOrCreateWaitingOrderRepoSemaphore(order, ct))
         {
@@ -317,15 +336,17 @@ public class Simulation : IDisposable
             _actionLedger.Add(action);
             _orderRepo[order.Id].Actions.Add(action);
             Console.WriteLine($"Discarding order: {action,100}");
+
+            // schedule followup: place original
+            followup?.Invoke();
         }
     }
 
     private async Task HardMove(
-        Config config,
         Order order,
         string target,
         DateTime moveAt,
-        Command followup,
+        System.Action followup,
         CancellationToken ct)
     {
         using (var semaphore = await GetOrCreateWaitingOrderRepoSemaphore(order, ct))
@@ -339,11 +360,7 @@ public class Simulation : IDisposable
             Console.WriteLine($"Moving order: {action,100}");
 
             // schedule followup: place original
-            var orderToPlace = followup.Order;
-            var placementTime = moveAt;
-            var placementTask = TryPlaceOrderAt(config, orderToPlace, placementTime, followup.Target, ct);
-            _commandHandlerRepo.TryAdd((orderToPlace, ActionType.Pickup, followup.Target), placementTask);
-
+            followup();
         }
     }
 
