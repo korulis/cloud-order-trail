@@ -71,7 +71,7 @@ public class Simulation : IDisposable
         }
     }
 
-    public async Task TryPlaceOrderAt(Config config, Order order, DateTime placementTime, string target, CancellationToken ct)
+    public async Task TryPlaceOrder(Config config, Order order, DateTime placementTime, string target, CancellationToken ct, int retryCount = 0)
     {
         // todo kb: export this outside of this fct
         await WaitUntil(placementTime, ct);
@@ -84,7 +84,6 @@ public class Simulation : IDisposable
         System.Action followup = () => _commandHandlerRepo.TryAdd(
             (order, ActionType.Place, target),
             TryPlaceOrder(config, order, localNow, target, ct, retryCount + 1));
-        // Console.WriteLine("GGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGG in TryPlaceOrder after creating followup" + JsonSerializer.Serialize(new { order, placementTime, target }));
 
         if (IsShelf(target))
         {
@@ -94,9 +93,7 @@ public class Simulation : IDisposable
             }
             else
             {
-                // Console.WriteLine("GGGGGGGGGGGGGGGGGGGGGGGG in TryPlaceOrder shelf not full, placing" + order.Id);
                 await HardPlace(localNow, Target.Shelf, order, config, ct);
-                // Console.WriteLine("GGGGGGGGGGGGGGGGGGGGGGGG in TryPlaceOrder after placing" + order.Id);
             }
 
         }
@@ -138,7 +135,6 @@ public class Simulation : IDisposable
 
         orders.Select((Order order, int i) =>
         {
-            // Console.WriteLine("GGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGG before creating placement task");
             var placementTask = TryPlaceOrder(
                 config,
                 order,
@@ -147,23 +143,17 @@ public class Simulation : IDisposable
                 ct);
             var key = (order, ActionType: ActionType.Place, Target: ToTarget(order.Temp));
             // Ignore failure. If this fails - it is ok, that means somebody already created the task we need.
-            // Console.WriteLine("GGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGG before adding placement task");
             _commandHandlerRepo.TryAdd(key, placementTask);
-            // Console.WriteLine("GGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGG after adding placement task");
             return i;
         }).ToList();
 
         // the condition here could be also be checking list of completed orders.
         while (_commandHandlerRepo.Values.Any(x => !x.IsCompleted))
         {
-            // Console.WriteLine("GGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGG before filtering order tasks " + _commandHandlerRepo.Count);
             var unfinishedTasks = _commandHandlerRepo.Values.Where(x => !x.IsCompleted).ToList();
-            // Console.WriteLine("1GGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGG current amount of orderTasks: " + unfinishedTasks.Count());
             Task completedTask = await Task.WhenAny(unfinishedTasks);
-            // Console.WriteLine("2GGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGG current amount of orderTasks: " + completedTask.IsCompleted + " " + unfinishedTasks.Count());
             // rethrow exceptions if any
             await completedTask;
-            // Console.WriteLine("3GGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGG current amount of orderTasks: " + unfinishedTasks.Count());
         }
 
         var result = _orderRepo.Select(kvp => kvp.Value.Actions).SelectMany(x => x).OrderBy(x => x.Timestamp).ToList();
@@ -194,7 +184,7 @@ public class Simulation : IDisposable
         else
         {
             string discardFromTarget = orderActions.Last().Target;
-            await HardDiscard(orderToPickup, discardFromTarget, localNow, ct);
+            await HardDiscard(orderToPickup, discardFromTarget, localNow, null, ct);
         }
     }
 
@@ -207,49 +197,6 @@ public class Simulation : IDisposable
             _actionLedger.Add(pickupAction);
             _orderRepo[order.Id].Actions.Add(pickupAction);
             Console.WriteLine($"Picking up order: {pickupAction,100}");
-        }
-    }
-
-    private async IAsyncEnumerable<Task> PlaceOrders(Config config, List<Order> orders, [EnumeratorCancellation] CancellationToken ct)
-    {
-        foreach (var order in orders)
-        {
-            var localNow = _time.GetLocalNow().DateTime;
-            var target = ToTarget(order.Temp);
-
-            Task task = Task.CompletedTask;
-
-            using (var placeSemaphore = await GetOrCreateWaitingOrderRepoSemaphore(order, ct))
-            {
-                _pickableOrders.Add(order);
-
-                var actions = _orderRepo.Values.Select(x => x.Actions).SelectMany(x => x).ToList();
-                if (IsShelf(target))
-                {
-                    await TryPlaceOnShelf(config, localNow, order, ct);
-                }
-                else
-                {
-                    if (IsFull(target, config.storageLimits, _orderRepo))
-                    {
-                        await TryPlaceOnShelf(config, localNow, order, ct);
-                    }
-                    else
-                    {
-                        var placemenTime = localNow;
-                        await HardPlace(placemenTime, target, order, config, ct);
-                    }
-                }
-
-            }
-
-            if (task == Task.CompletedTask)
-            {
-                throw new Exception($"Task was not created properly {JsonSerializer.Serialize(order)}");
-            }
-            yield return task;
-
-            await WaitUntil(localNow.AddMicroseconds(config.rate), ct);
         }
     }
 
@@ -316,7 +263,7 @@ public class Simulation : IDisposable
         if (orderToMove is not null)
         {
             string moveToTarget = ToTarget(orderToMove.Temp);
-            await HardMove(config, orderToMove, moveToTarget, localNow, followup, ct);
+            await HardMove(orderToMove, moveToTarget, localNow, followup, ct);
         }
         else
         {
@@ -410,8 +357,8 @@ public class Simulation : IDisposable
     }
 
     private static List<KeyValuePair<string, RepoEntry>> KvpsWithOrdersOnTarget(
-    Dictionary<string, RepoEntry> _actionRepo,
-    string target)
+        Dictionary<string, RepoEntry> _actionRepo,
+        string target)
     {
         var result = _actionRepo.Where(kvp =>
         {
