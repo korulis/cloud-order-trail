@@ -13,6 +13,25 @@ public class Simulation : IDisposable
     private readonly List<Order> _pickableOrders = [];
     // this is like read model in CQRS. It should be available for read at all times. Not locked. .ToList() should be used before reading.
     private readonly ConcurrentBag<Action> _actionLedger = [];
+    // /// <summary>
+    // /// To lock or not to lock
+    // /// 1. if lock: ...
+    // /// 2. if not lock: ...
+    // /// 
+    // /// Lets assume we have a setup where config.rate is very low, say 1 millisecond..
+    // /// If you lock the whole storage repo, then paralelism just looses sense, because only one thread can mutate the state of the system at a time.
+    // /// If you want to lock only the entries of storage repo that you want to operate on (mutate).. then:
+    // /// Assume order c1 comes for cooler. So we lock cooler entry before we start reading the list of orders, 
+    // /// so that we can make a decision of what to do (and do it) that is consistent with actual situation and we unlock the cooler entry after we are done mutating it (placing the order). 
+    // /// We read the contents of cooller and ,assume, we see it full. So then next we lock shelf entry, because we need to try to put the c1 order on shelf. So the order of locking entries was cooler->shelf
+    // /// Now assume concurently another order arrives. Order s1 - for shelf storage. So we 
+    // /// </summary>
+    // private readonly Dictionary<string, List<Order>> _storageRepo = new() {
+    //     { Target.Cooler, new List<Order>() { } }, // cooler entry
+    //     { Target.Shelf, new List<Order>() { } }, // shelf entry
+    //     { Target.Heater, new List<Order>() { } }, // heater entry
+    // };
+
     private readonly Dictionary<string, RepoEntry> _orderRepo = new() { };
     private readonly ConcurrentDictionary<Order, RepoSemaphore> _orderRepoSemaphores = new();
     private readonly ConcurrentDictionary<Command, Task> _commandHandlerRepo = new();
