@@ -152,7 +152,7 @@ public class SimulateTests : IDisposable
     }
 
     [Fact()]
-    public async Task Puts_SingleOrderInEachTarget()
+    public async Task Puts_AnOrderInEachTarget()
     {
         // Arrange
         List<Order> orders = [
@@ -184,6 +184,7 @@ public class SimulateTests : IDisposable
         var actions = await SimulateToTheEnd(_defaultConfig, orders, _cts.Token);
 
         // Assert
+        Assert.NotEmpty(actions);
         Assert.True(
             actions.Where(x => x.ActionType == ActionType.Place).All(x => x.Target == Target.Cooler),
             $"Not all orders were put in the cooler: {string.Join(",", actions.Where(x => x.ActionType == ActionType.Place).Select(x => x.Target))}");
@@ -563,6 +564,8 @@ public class SimulateTests : IDisposable
         var actions = await actionsTask;
         return actions;
     }
+
+
 
     public void Dispose()
     {
