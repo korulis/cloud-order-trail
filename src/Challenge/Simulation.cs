@@ -106,7 +106,7 @@ public class Simulation : IDisposable
 
         if (IsShelf(target))
         {
-            if (IsFull(Target.Shelf, config.storageLimits, _orderRepo))
+            if (IsFull(Target.Shelf, config.storageLimits))
             {
                 await TrySolveFullShelf(config, localNow, followup, ct);
             }
@@ -118,9 +118,9 @@ public class Simulation : IDisposable
         }
         else
         {
-            if (IsFull(target, config.storageLimits, _orderRepo))
+            if (IsFull(target, config.storageLimits))
             {
-                if (IsFull(Target.Shelf, config.storageLimits, _orderRepo))
+                if (IsFull(Target.Shelf, config.storageLimits))
                 {
                     await TrySolveFullShelf(config, localNow, followup, ct);
                 }
@@ -265,14 +265,14 @@ public class Simulation : IDisposable
 
     private async Task TrySolveFullShelf(Config config, DateTime localNow, System.Action followup, CancellationToken ct)
     {
-        var kvpsWithOrdersOnShelf = KvpsWithOrdersOnTarget(_orderRepo, Target.Shelf);
+        var kvpsWithOrdersOnShelf = KvpsWithOrdersOnTarget(Target.Shelf);
         var entriesForOrdersToMove = EntriesForForeignOrdersOnShelf(kvpsWithOrdersOnShelf);
         Order? orderToMove = null;
 
         foreach (var entryForOrderToMove in entriesForOrdersToMove)
         {
             var targetToMoveTo = ToTarget(entryForOrderToMove.Order.Temp);
-            if (!IsFull(targetToMoveTo, config.storageLimits, _orderRepo))
+            if (!IsFull(targetToMoveTo, config.storageLimits))
             {
                 orderToMove = entryForOrderToMove.Order;
                 break;
@@ -366,20 +366,18 @@ public class Simulation : IDisposable
         return result;
     }
 
-    private static bool IsFull(
+    private bool IsFull(
         string target,
-        Dictionary<string, int> storageLimits,
-        Dictionary<string, RepoEntry> actionRepo)
+        Dictionary<string, int> storageLimits)
     {
-        var entriesWithOrdersOnTarget = KvpsWithOrdersOnTarget(actionRepo, target).ToList();
+        var entriesWithOrdersOnTarget = KvpsWithOrdersOnTarget(target).ToList();
         return storageLimits[target] <= entriesWithOrdersOnTarget.Count;
     }
 
-    private static List<KeyValuePair<string, RepoEntry>> KvpsWithOrdersOnTarget(
-        Dictionary<string, RepoEntry> _actionRepo,
+    private List<KeyValuePair<string, RepoEntry>> KvpsWithOrdersOnTarget(
         string target)
     {
-        var result = _actionRepo.Where(kvp =>
+        var result = _orderRepo.Where(kvp =>
         {
             var lastOrderAction = kvp.Value.Actions.Last();
             return lastOrderAction.Target == target && !IsFinal(lastOrderAction);
