@@ -265,7 +265,7 @@ public class Simulation : IDisposable
 
     private async Task TrySolveFullShelf(Config config, DateTime localNow, System.Action followup, CancellationToken ct)
     {
-        var kvpsWithOrdersOnShelf = KvpsWithOrdersOnTarget(Target.Shelf);
+        var kvpsWithOrdersOnShelf = OrdersOn(Target.Shelf);
         var entriesForOrdersToMove = EntriesForForeignOrdersOnShelf(kvpsWithOrdersOnShelf);
         Order? orderToMove = null;
 
@@ -370,11 +370,10 @@ public class Simulation : IDisposable
         string target,
         Dictionary<string, int> storageLimits)
     {
-        var entriesWithOrdersOnTarget = KvpsWithOrdersOnTarget(target).ToList();
-        return storageLimits[target] <= entriesWithOrdersOnTarget.Count;
+        return storageLimits[target] <= OrdersOn(target).Count;
     }
 
-    private List<KeyValuePair<string, RepoEntry>> KvpsWithOrdersOnTarget(
+    private List<KeyValuePair<string, RepoEntry>> OrdersOn(
         string target)
     {
         var result = _orderRepo.Where(kvp =>
