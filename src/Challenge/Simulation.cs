@@ -400,9 +400,17 @@ public class Simulation : IDisposable
     {
         TimeSpan spoilage;
         var placementTime = orderActions.First().GetOriginalTimestamp();
-        if (!IsShelf(ToTarget(order.Temp)))
+        if (IsShelf(ToTarget(order.Temp)))
         {
-            if (IsShelf(orderActions.First().Target))
+            spoilage = localNow - placementTime;
+        }
+        else
+        {
+            if (orderActions.First().Target == ToTarget(order.Temp))
+            {
+                spoilage = localNow - placementTime;
+            }
+            else
             {
                 if (orderActions.Count >= 2 && orderActions[1].ActionType == ActionType.Move)
                 {
@@ -414,14 +422,6 @@ public class Simulation : IDisposable
                     spoilage = (localNow - placementTime) * 2;
                 }
             }
-            else
-            {
-                spoilage = localNow - placementTime;
-            }
-        }
-        else
-        {
-            spoilage = localNow - placementTime;
         }
 
         return spoilage;
