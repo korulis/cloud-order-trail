@@ -265,16 +265,16 @@ public class Simulation : IDisposable
 
     private async Task TrySolveFullShelf(Config config, DateTime localNow, System.Action followup, CancellationToken ct)
     {
-        var kvpsWithOrdersOnShelf = OrdersOn(Target.Shelf);
-        var entriesForOrdersToMove = EntriesForForeignOrdersOnShelf(kvpsWithOrdersOnShelf);
+        var ordersOnShelf = OrdersOn(Target.Shelf);
+        var movableOrders = ForeignOrdersOnShelf(ordersOnShelf);
         Order? orderToMove = null;
 
-        foreach (var entryForOrderToMove in entriesForOrdersToMove)
+        foreach (var movableOrder in movableOrders)
         {
-            var targetToMoveTo = ToTarget(entryForOrderToMove.Order.Temp);
+            var targetToMoveTo = ToTarget(movableOrder.Temp);
             if (!IsFull(targetToMoveTo, config.storageLimits))
             {
-                orderToMove = entryForOrderToMove.Order;
+                orderToMove = movableOrder;
                 break;
             }
         }
@@ -286,7 +286,7 @@ public class Simulation : IDisposable
         }
         else
         {
-            var kvpToDiscard = CalculateOrderToDiscard(kvpsWithOrdersOnShelf);
+            var kvpToDiscard = CalculateOrderToDiscard(ordersOnShelf);
             var orderToDiscard = kvpToDiscard.Value.Order;
             string discardFromTarget = kvpToDiscard.Value.Actions.Last().Target;
             // todo kb: pass followup as parameter here too.
@@ -356,12 +356,12 @@ public class Simulation : IDisposable
     }
 
 
-    private static List<RepoEntry> EntriesForForeignOrdersOnShelf(
-    List<KeyValuePair<string, RepoEntry>> kvpsWithOrdersOnShelf)
+    private static List<Order> ForeignOrdersOnShelf(
+    List<KeyValuePair<string, RepoEntry>> OrdersOnShelf)
     {
-        var result = kvpsWithOrdersOnShelf
+        var result = OrdersOnShelf
         .Where(kvp => Target.Shelf != ToTarget(kvp.Value.Order.Temp))
-        .Select(kvp => kvp.Value)
+        .Select(kvp => kvp.Value.Order)
         .ToList();
         return result;
     }
