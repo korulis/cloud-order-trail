@@ -266,18 +266,9 @@ public class Simulation : IDisposable
     private async Task TrySolveFullShelf(Config config, DateTime localNow, System.Action followup, CancellationToken ct)
     {
         var ordersOnShelf = OrdersOn(Target.Shelf);
-        var movableOrders = ForeignOrdersOnShelf(ordersOnShelf);
-        Order? orderToMove = null;
-
-        foreach (var movableOrder in movableOrders)
-        {
-            var targetToMoveTo = ToTarget(movableOrder.Temp);
-            if (!IsFull(targetToMoveTo, config.storageLimits))
-            {
-                orderToMove = movableOrder;
-                break;
-            }
-        }
+        var foreignOrders = ForeignOrdersOnShelf(ordersOnShelf);
+        Order? orderToMove = foreignOrders
+            .FirstOrDefault(x => !IsFull(ToTarget(x.Temp), config.storageLimits));
 
         if (orderToMove is not null)
         {
@@ -357,9 +348,9 @@ public class Simulation : IDisposable
 
 
     private static List<Order> ForeignOrdersOnShelf(
-    List<KeyValuePair<string, RepoEntry>> OrdersOnShelf)
+    List<KeyValuePair<string, RepoEntry>> ordersOnShelf)
     {
-        var result = OrdersOnShelf
+        var result = ordersOnShelf
         .Where(kvp => Target.Shelf != ToTarget(kvp.Value.Order.Temp))
         .Select(kvp => kvp.Value.Order)
         .ToList();
