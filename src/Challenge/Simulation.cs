@@ -98,8 +98,6 @@ public class Simulation : IDisposable
         // have consisten local now after waiting
         var localNow = _time.GetLocalNow().DateTime;
 
-
-        // todo kb: maybe we do not have to create follow up right now. Later?
         System.Action followup = () => _commandHandlerRepo.TryAdd(
             (order, ActionType.Place, target),
             TryPlaceOrder(config, order, localNow, target, ct, retryCount + 1));
@@ -272,15 +270,14 @@ public class Simulation : IDisposable
 
         if (orderToMove is not null)
         {
-            string moveToTarget = ToTarget(orderToMove.Temp);
-            await HardMove(orderToMove, moveToTarget, localNow, followup, ct);
+            string target = ToTarget(orderToMove.Temp);
+            await HardMove(orderToMove, target, localNow, followup, ct);
         }
         else
         {
             var kvpToDiscard = CalculateOrderToDiscard(ordersOnShelf);
             var orderToDiscard = kvpToDiscard.Value.Order;
             string discardFromTarget = kvpToDiscard.Value.Actions.Last().Target;
-            // todo kb: pass followup as parameter here too.
             await HardDiscard(orderToDiscard, discardFromTarget, localNow, followup, ct);
         }
     }
@@ -294,7 +291,6 @@ public class Simulation : IDisposable
             _orderRepo[order.Id].Actions.Add(action);
             Console.WriteLine($"Discarding order: {action,100}");
 
-            // schedule followup: place original
             followup?.Invoke();
         }
     }
