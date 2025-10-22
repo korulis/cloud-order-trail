@@ -1,12 +1,10 @@
 using System.Collections.Concurrent;
-using System.Runtime.CompilerServices;
-using System.Text.Json;
 
 namespace Challenge;
 
 using RepoEntry = (Order Order, List<Action> Actions);
 // todo kb: dont need Target because this DTO is only for uniqueness, not information. Information of target is in the Task itself.
-using Command = (Order Order, string ActionType, string Target);
+using Command = (Order Order, string ActionType);
 
 public class Simulation : IDisposable
 {
@@ -99,7 +97,7 @@ public class Simulation : IDisposable
         var localNow = _time.GetLocalNow().DateTime;
 
         System.Action followup = () => _commandHandlerRepo.TryAdd(
-            (order, ActionType.Place, target),
+            (order, ActionType.Place),
             TryPlaceOrder(config, order, localNow, target, ct, retryCount + 1));
 
         if (IsShelf(target))
@@ -158,7 +156,7 @@ public class Simulation : IDisposable
                 localNow + TimeSpan.FromMicroseconds(i * config.rate),
                 ToTarget(order.Temp),
                 ct);
-            var key = (order, ActionType: ActionType.Place, Target: ToTarget(order.Temp));
+            var key = (order, ActionType: ActionType.Place);
             // Ignore failure. If this fails - it is ok, that means somebody already created the task we need.
             _commandHandlerRepo.TryAdd(key, placementTask);
             return i;
@@ -246,7 +244,7 @@ public class Simulation : IDisposable
             // todo kb: return task to be scheduled instead of mutating??? 
             // pro:this would allow to see that only one side effect at a time is possible..
             // con: would happen outside of semaphore.. would allow 2 contradicting commands to be scheduled... buuut only one of them would be completed, so.. it's ok.
-            _commandHandlerRepo[(order, ActionType.Pickup, target)] = pickupTask;
+            _commandHandlerRepo[(order, ActionType.Pickup)] = pickupTask;
             // }
             // else
             // {
